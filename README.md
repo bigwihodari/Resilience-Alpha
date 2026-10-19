@@ -101,6 +101,12 @@ Détail complet dans [`SECURITE.md`](SECURITE.md). En bref :
 - Base de données **non exposée** ; `no-new-privileges` sur les services.
 - **Secrets chiffrés via SOPS + age** ; `.env` jamais committé.
 
+## Gouvernance
+
+Analyse de risques et conformité, reliées à l'architecture réelle (dossier) :
+- [EBIOS RM](docs/gouvernance/ebios-rm.md) · [PCA/PRA](docs/gouvernance/pca-pra.md) ·
+  [NIS2/DORA](docs/gouvernance/nis2-dora.md) · [synthèse direction](docs/gouvernance/README.md)
+
 ## Dépôt
 
 https://github.com/bigwihodari/Resilience-Alpha
