@@ -30,10 +30,12 @@ CONTAM = float(os.environ.get("CONTAMINATION", "0.02"))
 DIST_FLAG = float(os.environ.get("DIST_FLAG", "8"))   # distance (σ) => anomalie
 MODEL_PATH = os.environ.get("MODEL_PATH", "/app/model/detector.joblib")
 
+# Features = débits (req/s) : signaux stables et directement comparables.
+# (La latence, trop sensible au volume de logins bcrypt, reste visible dans le
+#  cockpit via Prometheus mais n'entre pas dans le vecteur du modèle.)
 QUERIES = {
     "req_total": 'sum(rate(http_requests_total[1m]))',
     "req_auth": 'sum(rate(http_requests_total{job="auth"}[1m]))',
-    "lat_auth_p95": 'histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job="auth"}[1m])) by (le))',
     "r4xx": 'sum(rate(http_requests_total{status="4xx"}[1m]))',
     "r5xx": 'sum(rate(http_requests_total{status="5xx"}[1m]))',
 }
@@ -83,8 +85,10 @@ def fit(samples):
     arr = np.asarray(samples, dtype=float)
     mu = arr.mean(axis=0)
     sd = arr.std(axis=0)
-    # plancher d'écart-type : évite la division par ~0 sur une feature stable
-    sd = np.maximum(sd, np.maximum(0.05 * np.abs(mu), 1e-3))
+    # Plancher de bruit adapté au domaine (débits en req/s) : une variation de
+    # moins de ~0.5 req/s n'est pas significative. Évite qu'une feature quasi
+    # constante à l'entraînement (ex. 4xx=0) ne sur-réagisse au moindre bruit.
+    sd = np.maximum(sd, 0.5)
     model = IsolationForest(contamination=CONTAM, random_state=42).fit((arr - mu) / sd)
     base_d_mean = float(np.mean([distance(r) for r in samples]))
 
@@ -137,12 +141,14 @@ def loop():
                 d = distance(feats)
                 excess = max(0.0, d - base_d_mean)
                 score = min(100.0, excess * 6.0)
-                # Fiable : grande distance OU l'Isolation Forest déclare l'outlier.
+                # Flag piloté par la distance standardisée (fiable sur gros écarts).
+                # L'Isolation Forest est conservé en corroboration (exposé en info).
                 try:
                     if_outlier = int(model.predict(((np.asarray(feats) - mu) / sd).reshape(1, -1))[0]) == -1
                 except Exception:
                     if_outlier = False
-                is_anom = (d - base_d_mean) > DIST_FLAG or if_outlier
+                is_anom = excess > DIST_FLAG
+                state["if_outlier"] = if_outlier
                 state["distance"] = round(d, 2)
                 state["score"] = round(score, 1)
                 state["is_anomaly"] = bool(is_anom)
