@@ -22,6 +22,7 @@ services:
   auth:
     build: ./services/auth
     container_name: ra-auth
+    security_opt: ["no-new-privileges:true"]
     environment:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-resilience}:${POSTGRES_PASSWORD:-resilience}@db:5432/${POSTGRES_DB:-resilience}
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
@@ -39,6 +40,7 @@ services:
   api:
     build: ./services/api
     container_name: ra-api
+    security_opt: ["no-new-privileges:true"]
     environment:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-resilience}:${POSTGRES_PASSWORD:-resilience}@db:5432/${POSTGRES_DB:-resilience}
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
@@ -56,6 +58,7 @@ services:
   frontend:
     build: ./services/frontend
     container_name: ra-frontend
+    security_opt: ["no-new-privileges:true"]
     depends_on:
       - api
       - auth
@@ -67,6 +70,7 @@ services:
   traffic-gen:
     build: ./services/traffic-gen
     container_name: ra-traffic-gen
+    security_opt: ["no-new-privileges:true"]
     environment:
       API_URL: http://api:8000
       AUTH_URL: http://auth:8000
@@ -138,6 +142,7 @@ services:
   detector:
     build: ./services/detector
     container_name: ra-detector
+    security_opt: ["no-new-privileges:true"]
     environment:
       PROM_URL: http://prometheus:9090
       INTERVAL: "5"
@@ -154,6 +159,7 @@ services:
   orchestrator:
     build: ./services/orchestrator
     container_name: ra-orchestrator
+    security_opt: ["no-new-privileges:true"]
     environment:
       DETECTOR_URL: http://detector:8000
       AUTH_URL: http://auth:8000

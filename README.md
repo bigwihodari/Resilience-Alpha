@@ -21,7 +21,9 @@ le **prouve** en rejouant une transaction.
 | `traffic-gen` | trafic légitime randomisé (baseline ML) | Python | ✅ P3 |
 | `attacker` | **app attaquant tout-en-un** (console + KPIs) | FastAPI + Chart.js | ✅ P3 |
 | `orchestrator` | moteur de remédiation (zero-touch) | FastAPI + Ansible | ⏳ P5 |
-| `waf` | pare-feu applicatif | Traefik + Coraza | ⏳ P7 |
+| WAF applicatif | filtrage des entrées (SQLi/XSS) dans `auth`+`api` | signatures OWASP | ✅ P7 |
+| SIEM / SOC | fonction SOC intégrée (Loki + Prometheus + cockpit) | — | ✅ P7 |
+| Secrets | gestion chiffrée | SOPS + age | ✅ P7 (workflow) |
 | `assistant` | assistant RAG | Ollama + LangChain | ⏳ P8 |
 
 > 📖 **Nouvelle machine / équipe ?** Guide pas-à-pas détaillé dans
@@ -89,9 +91,15 @@ Console (tout-en-un) : http://localhost:8090 — voir [`attacker/README.md`](att
 
 ## Sécurité
 
-- La base de données n'est **pas** exposée au réseau.
-- Les secrets passeront par **SOPS** (phase Cyber) ; `.env` n'est jamais committé.
-- Le moteur de remédiation aura des droits **restreints** (docker-socket-proxy).
+Détail complet dans [`SECURITE.md`](SECURITE.md). En bref :
+- **WAF applicatif** (SQLi/XSS) sur `auth` et `api` → blocage 403 + métrique + log.
+- **Fonction SOC** intégrée (Loki + Prometheus + vue SOC du cockpit).
+- **Deux réponses distinctes** : DoS → bouclier (disponibilité) ; injection SQL →
+  WAF + contrôle d'intégrité (compromission).
+- **Moindre privilège** : orchestrateur via API d'admin scoped (token dédié), pas
+  d'accès god-mode aux conteneurs.
+- Base de données **non exposée** ; `no-new-privileges` sur les services.
+- **Secrets chiffrés via SOPS + age** ; `.env` jamais committé.
 
 ## Dépôt
 

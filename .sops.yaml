@@ -1,0 +1,5 @@
+# Configuration SOPS — chiffrement des secrets avec age.
+# Remplacer la clé publique ci-dessous par la vôtre (générée par age-keygen).
+creation_rules:
+  - path_regex: secrets/.*\.sops\.env$
+    age: age1exemple00000000000000000000000000000000000000000000000000000
