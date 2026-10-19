@@ -8,10 +8,15 @@ services:
     build: ./app
     container_name: ra-client
     environment:
-      # Adresse du serveur HOST principal (en labo : 192.168.137.1).
+      # Serveur principal (en labo : 192.168.137.1, ports 8000/8001).
       HOST_PRIMARY: ${HOST_PRIMARY:-host.docker.internal}
-      # Adresse du serveur de secours (utilisé pour la bascule en P14).
+      HOST_PRIMARY_API_PORT: ${HOST_PRIMARY_API_PORT:-8000}
+      HOST_PRIMARY_AUTH_PORT: ${HOST_PRIMARY_AUTH_PORT:-8001}
+      # Serveur de secours. Labo : 192.168.137.2 (stack complète, 8000/8001).
+      # Test local : host.docker.internal, ports décalés 8010/8011.
       HOST_BACKUP: ${HOST_BACKUP:-host.docker.internal}
+      HOST_BACKUP_API_PORT: ${HOST_BACKUP_API_PORT:-8000}
+      HOST_BACKUP_AUTH_PORT: ${HOST_BACKUP_AUTH_PORT:-8001}
       # N'autorise envsubst que sur les variables HOST_* (préserve $host nginx).
       NGINX_ENVSUBST_FILTER: "HOST_"
     extra_hosts:
