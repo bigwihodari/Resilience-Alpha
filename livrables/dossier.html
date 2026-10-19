@@ -65,10 +65,10 @@
   détection par apprentissage automatique, une remédiation automatique et une vérification
   du rétablissement par une nouvelle transaction réussie.</p>
   <div class="kpi">
-    <div><b>~15 s</b>détection → reprise (RTO mesuré)</div>
-    <div><b>100 %</b>reprise sans intervention humaine</div>
-    <div><b>15/15</b>vérifications de recette au vert</div>
-    <div><b>5/5</b>piliers couverts</div>
+    <div><b>~15 s</b>détection → reprise (RTO)</div>
+    <div><b>100 %</b>reprise sans humain</div>
+    <div><b>15/15 · 13/13</b>recettes résilience · failover</div>
+    <div><b>2 serveurs</b>bascule automatique (HA)</div>
   </div>
   <p>La solution couvre les cinq domaines exigés : développement (microservices de paiement),
   infrastructure (conteneurisation + observabilité), IA/Data (détection ML + assistant RAG),
@@ -106,6 +106,11 @@
   <h3>Flux de résilience</h3>
   <p><code>trafic + attaque → métriques Prometheus + logs Loki → détecteur ML (score) →
   orchestrateur (décision + action) → vérification canari → cockpit</code></p>
+  <h3>Montage haute disponibilité (5 PC)</h3>
+  <p>Deux serveurs (<b>principal + secours</b>), deux clients, un attaquant. L'application
+  <b>client est séparée du serveur</b> : les clients se paient en direct (transfert entre
+  comptes + annuaire de recherche), le serveur gère transactions, connexions et supervision
+  (cockpit). Le backup <b>réplique</b> le principal (comptes + clés d'idempotence).</p>
 </section>
 
 <!-- 3. DÉTECTION ML -->
@@ -154,6 +159,13 @@
   <p>L'orchestrateur n'a <b>pas</b> d'accès god-mode aux conteneurs : il agit via une API
   d'administration <b>scoped</b> (activer le bouclier, contrôler l'intégrité), protégée par un
   token dédié — un point d'attention explicite du cahier des charges.</p>
+  <h3>Haute disponibilité : bascule &amp; reprise de transaction</h3>
+  <p>Si le serveur principal tombe, l'application client <b>bascule automatiquement</b> sur le
+  serveur de secours (upstream nginx). Chaque paiement porte une <b>clé d'idempotence</b> :
+  une transaction en cours est <b>reprise exactement une fois</b> sur le backup, sans double
+  débit. Le backup se <b>promeut</b> autoritaire après quelques secondes d'absence du principal
+  (évite l'écrasement de ses propres écritures à son retour). Deux niveaux combinés :
+  auto-réparation (remédiation) si le principal peut se soigner, bascule si l'hôte crashe.</p>
 </section>
 
 <!-- 5. SÉCURITÉ -->
@@ -188,6 +200,9 @@
   </table>
   <p>Chaos engineering (<code>scripts/chaos.sh</code>) : arrêt brutal d'un conteneur →
   reprise automatique vérifiée par canari (politique de redémarrage).</p>
+  <p>Recette haute disponibilité (<code>scripts/recette-ha.sh</code>) : crash du serveur
+  principal → bascule automatique du client sur le backup → <b>reprise de la transaction
+  en cours sans double débit</b> → nouveau paiement traité par le backup. <span class="ok">13 OK / 0 KO</span>.</p>
 </section>
 
 <!-- 7. GOUVERNANCE -->

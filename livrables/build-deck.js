@@ -102,6 +102,17 @@ tb(s, "💉 Injection SQL → COMPROMISSION", { x: 7.05, y: 2.0, w: 5.4, h: 0.5,
 tb(s, "• Blocage par le WAF applicatif (403)\n• Contrôle d'intégrité des données\n• Restauration d'un état sain si altération\n• Vérification : aucune donnée altérée", { x: 7.05, y: 2.6, w: 5.4, h: 3.5, fontSize: 14, color: NAVY, margin: 0, lineSpacingMultiple: 1.3 });
 tb(s, "Accès maîtrisés : l'orchestrateur agit via une API d'administration scoped (pas d'accès god-mode aux conteneurs).", { x: 0.6, y: 6.6, w: 12, h: 0.5, fontSize: 12.5, bold: true, color: PURPLE, margin: 0 });
 
+/* 6b — Haute disponibilité */
+s = p.addSlide(); s.background = { color: WHITE };
+titleBar(s, "Haute disponibilité : le service ne tombe pas", "Montage 5 PC");
+card(s, 0.6, 1.8, 6.0, 4.5, SOFT);
+tb(s, "🖥️ Topologie", { x: 0.85, y: 1.98, w: 5.5, h: 0.45, fontSize: 15, bold: true, color: NAVY, margin: 0 });
+tb(s, "• HOST-PRINCIPAL : serveur + cockpit\n• HOST-BACKUP : réplique le principal\n  (comptes + clés d'idempotence)\n• CLIENT-A / CLIENT-B : app de paiement\n  (login + recherche + transfert)\n• ATTAQUANT : vise le principal", { x: 0.85, y: 2.5, w: 5.55, h: 3.6, fontSize: 13.5, color: NAVY, margin: 0, lineSpacingMultiple: 1.25 });
+card(s, 6.8, 1.8, 5.9, 4.5, "E3F3EC");
+tb(s, "🔁 Bascule & reprise", { x: 7.05, y: 1.98, w: 5.4, h: 0.45, fontSize: 15, bold: true, color: GREEN, margin: 0 });
+tb(s, "1. Le serveur principal tombe\n2. Le client bascule AUTOMATIQUEMENT sur le backup\n3. La transaction en cours est REPRISE\n   (clé d'idempotence) — sans double débit\n4. Service maintenu, zéro intervention", { x: 7.05, y: 2.5, w: 5.45, h: 3.0, fontSize: 13.5, color: NAVY, margin: 0, lineSpacingMultiple: 1.3 });
+tb(s, "Recette failover : 13 / 13 ✓", { x: 7.05, y: 5.7, w: 5.4, h: 0.5, fontSize: 15, bold: true, color: GREEN, margin: 0 });
+
 /* 7 — Sécurité */
 s = p.addSlide(); s.background = { color: WHITE };
 titleBar(s, "Défense & sécurité", "Cybersécurité");
