@@ -39,3 +39,6 @@ build.log
 # livrables : dépendances de génération
 livrables/node_modules/
 livrables/package*.json
+
+# archives de rendu (artefacts)
+livrables/*.zip
