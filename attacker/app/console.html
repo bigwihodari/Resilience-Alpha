@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Console Attaquant — Resilience-Alpha</title>
+<script src="/static/chart.umd.min.js"></script>
+<style>
+  :root{ --bg:#0E1020; --panel:#171A2E; --line:#262a44; --txt:#E7E9F5; --muted:#9aa0c3;
+         --red:#E5484D; --red2:#ff6b6f; --green:#3BD671; --amber:#E7B53C; --accent:#6C5CE7; }
+  *{box-sizing:border-box} html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--txt);font-family:system-ui,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:16px}
+  header{display:flex;align-items:center;gap:12px;padding:14px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+  header .dot{width:12px;height:12px;border-radius:50%;background:var(--muted)}
+  header .dot.on{background:var(--red);box-shadow:0 0 12px var(--red);animation:pulse 1s infinite}
+  @keyframes pulse{50%{opacity:.4}}
+  h1{font-size:20px;margin:0;font-weight:800;letter-spacing:.5px}
+  .target{margin-left:auto;font-size:13px;color:var(--muted)}
+  .target b{color:var(--red2)}
+  .grid{display:grid;grid-template-columns:320px 1fr;gap:16px;margin-top:16px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
+  .panel h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 12px}
+  label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
+  select,input[type=range],input[type=number]{width:100%}
+  .val{float:right;color:var(--txt);font-weight:700}
+  .btns{display:flex;gap:10px;margin-top:16px}
+  button{flex:1;border:0;border-radius:10px;padding:12px;font-weight:700;cursor:pointer;font-size:14px}
+  .go{background:var(--red);color:#fff} .go:hover{background:var(--red2)}
+  .stop{background:#2a2f4a;color:var(--txt)} .stop:hover{background:#363c5e}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+  .kpi{background:#11142a;border:1px solid var(--line);border-radius:12px;padding:12px;text-align:center}
+  .kpi .n{font-size:24px;font-weight:800}
+  .kpi .l{font-size:11px;color:var(--muted);margin-top:2px}
+  .kpi.err .n{color:var(--red2)} .kpi.ok .n{color:var(--green)} .kpi.lat .n{color:var(--amber)}
+  .bar{height:6px;background:#11142a;border-radius:3px;overflow:hidden;margin-top:6px}
+  .bar>i{display:block;height:100%;background:var(--red);width:0%}
+  .links{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+  .links a{font-size:12.5px;color:var(--txt);background:#11142a;border:1px solid var(--line);
+    padding:7px 11px;border-radius:999px;text-decoration:none}
+  .links a:hover{border-color:var(--accent)}
+  .codes{font-size:12px;color:var(--muted);margin-top:8px}
+  .note{font-size:11px;color:var(--muted);margin-top:10px;line-height:1.5}
+  @media(max-width:760px){.grid{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="dot" id="dot"></span>
+    <h1>⚔️ CONSOLE ATTAQUANT</h1>
+    <span class="target">Cible : <b id="target">__TARGET_URL__</b></span>
+  </header>
+
+  <div class="grid">
+    <!-- Contrôles -->
+    <div class="panel">
+      <h2>Lancer une attaque</h2>
+      <label>Type d'attaque</label>
+      <select id="type">
+        <option value="dos">Saturation (déni de service)</option>
+        <option value="sqli">Injection SQL</option>
+      </select>
+      <label>Intensité <span class="val" id="intv">20</span></label>
+      <input type="range" id="intensity" min="1" max="80" value="20" />
+      <label>Durée (s) <span class="val" id="durv">60</span></label>
+      <input type="range" id="duration" min="10" max="300" value="60" step="5" />
+      <div class="btns">
+        <button class="go" id="start">▶ Lancer</button>
+        <button class="stop" id="stopb" disabled>■ Stop</button>
+      </div>
+      <div class="bar"><i id="prog"></i></div>
+
+      <h2 style="margin-top:20px">Supervision de la cible</h2>
+      <div class="links">
+        <a href="http://__TARGET_HOST__:8080/cockpit" target="_blank" rel="noreferrer">🛡️ Cockpit</a>
+        <a href="http://__TARGET_HOST__:8080" target="_blank" rel="noreferrer">💳 App paiement</a>
+        <a href="http://__TARGET_HOST__:3000" target="_blank" rel="noreferrer">📊 Grafana</a>
+      </div>
+      <p class="note">Usage strictement limité au labo de l'équipe et à la cible configurée.
+        Environnement et données fictifs.</p>
+    </div>
+
+    <!-- Suivi -->
+    <div class="panel">
+      <h2>Indicateurs en direct (côté attaquant)</h2>
+      <div class="kpis">
+        <div class="kpi"><div class="n" id="k-rate">0</div><div class="l">req/s envoyées</div></div>
+        <div class="kpi"><div class="n" id="k-sent">0</div><div class="l">total envoyé</div></div>
+        <div class="kpi err"><div class="n" id="k-err">0</div><div class="l">erreurs cible (5xx)</div></div>
+        <div class="kpi lat"><div class="n" id="k-lat">0</div><div class="l">latence cible (ms)</div></div>
+      </div>
+      <canvas id="chart" height="150"></canvas>
+      <div class="codes" id="codes">Codes de réponse : —</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+$("intensity").oninput = () => $("intv").textContent = $("intensity").value;
+$("duration").oninput = () => $("durv").textContent = $("duration").value;
+
+let chart = null;
+try {
+const ctx = $("chart").getContext("2d");
+chart = new Chart(ctx, {
+  type: "line",
+  data: { labels: [], datasets: [
+    { label: "req/s envoyées", data: [], borderColor: "#E5484D", backgroundColor: "rgba(229,72,77,.15)", fill: true, tension: .3, yAxisID: "y" },
+    { label: "latence cible (ms)", data: [], borderColor: "#E7B53C", tension: .3, yAxisID: "y1" },
+  ]},
+  options: { responsive: true, animation: false,
+    plugins: { legend: { labels: { color: "#9aa0c3" } } },
+    scales: {
+      x: { ticks: { color: "#9aa0c3", maxTicksLimit: 8 }, grid: { color: "#262a44" } },
+      y: { position: "left", ticks: { color: "#E5484D" }, grid: { color: "#262a44" }, beginAtZero: true },
+      y1: { position: "right", ticks: { color: "#E7B53C" }, grid: { drawOnChartArea: false }, beginAtZero: true },
+    } }
+});
+} catch (e) { console.warn("Chart indisponible, KPIs seuls:", e); }
+
+async function post(path){ return (await fetch(path, {method:"POST", headers:{"Content-Type":"application/json"},
+  body: JSON.stringify({type:$("type").value, intensity:+$("intensity").value, duration:+$("duration").value})})).json(); }
+
+$("start").onclick = async () => { await post("/api/attack/start"); };
+$("stopb").onclick = async () => { await fetch("/api/attack/stop",{method:"POST"}); };
+
+async function poll(){
+  try{
+    const s = await (await fetch("/api/status")).json();
+    $("dot").className = "dot" + (s.running ? " on" : "");
+    $("start").disabled = s.running; $("stopb").disabled = !s.running;
+    $("k-sent").textContent = s.sent;
+    $("k-err").textContent = s.errors;
+    $("k-lat").textContent = s.avg_latency_ms;
+    const last = s.history.length ? s.history[s.history.length-1] : {rate:0};
+    $("k-rate").textContent = last.rate ?? 0;
+    $("prog").style.width = s.running && s.duration ? Math.min(100, 100*s.elapsed/s.duration)+"%" : "0%";
+    $("codes").textContent = "Codes de réponse : " + (Object.keys(s.status_codes).length ?
+      Object.entries(s.status_codes).map(([k,v])=>k+": "+v).join("  ·  ") : "—");
+    if (chart) {
+      chart.data.labels = s.history.map((_,i)=>i+"s");
+      chart.data.datasets[0].data = s.history.map(h=>h.rate);
+      chart.data.datasets[1].data = s.history.map(h=>h.latency);
+      chart.update();
+    }
+  }catch(e){ /* cible injoignable */ }
+}
+fetch("/api/config").then(r=>r.json()).then(c=>{ $("target").textContent = c.target_url; });
+setInterval(poll, 1000); poll();
+</script>
+</body>
+</html>

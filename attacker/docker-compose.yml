@@ -1,0 +1,19 @@
+name: resilience-alpha-attacker
+
+# Application UNIQUE du poste Attaquant : console + indicateurs + liens cible.
+# Se lance indépendamment de la plateforme (sur un PC distinct).
+
+services:
+  attacker:
+    build: ./app
+    container_name: ra-attacker
+    environment:
+      # URL de la plateforme CIBLE (le poste Hôte).
+      TARGET_URL: ${TARGET_URL:-http://host.docker.internal:8080}
+      # Adresse du poste Hôte pour les liens de supervision.
+      TARGET_HOST: ${TARGET_HOST:-localhost}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${ATTACKER_PORT:-8090}:8000"
+    restart: unless-stopped

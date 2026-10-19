@@ -51,7 +51,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(http_requests_total{job=\"api\",status=~\"5..\"}[1m]))",
+          "expr": "sum(rate(http_requests_total{job=\"api\",status=\"5xx\"}[1m])) or vector(0)",
           "legendFormat": "5xx/s"
         }
       ]

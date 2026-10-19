@@ -67,15 +67,30 @@ Les fois suivantes, c'est quasi instantané.
 
 ---
 
-## 4. Utiliser la plateforme
+## 4. Utiliser la plateforme (poste HÔTE)
+
+👉 **Un seul point d'entrée : l'application de paiement.** Une fois connecté, le
+**Hub** (page d'accueil) donne accès à **tout** sans avoir à chercher les URLs :
+paiement, cockpit, Grafana, Prometheus, logs et documentation API.
 
 | Interface | Adresse | Identifiants démo |
 |---|---|---|
-| **Paiement (frontend)** | http://localhost:8080 | `alice` / `password123` |
+| **Application de paiement + Hub** | http://localhost:8080 | `alice` / `password123` |
+| Cockpit de résilience | http://localhost:8080/cockpit | — |
 | API (doc interactive) | http://localhost:8000/docs | — |
-| Auth | http://localhost:8001 | — |
+| Grafana (dashboards) | http://localhost:3000 | `admin` / `admin` |
+| Prometheus (métriques) | http://localhost:9090/targets | — |
+| Logs (Loki via Grafana) | http://localhost:3000/explore | — |
+
+> Les ports sont modifiables dans `.env` (`FRONTEND_PORT`, `API_PORT`,
+> `GRAFANA_PORT`, `PROMETHEUS_PORT`…) en cas de conflit. Le script `start.ps1`
+> affiche les liens exacts à chaque lancement.
 
 Tu dois voir la page de connexion, pouvoir te connecter et faire un paiement test.
+
+> ℹ️ **Modèle à deux applications** : le **poste Hôte** fait tourner la plateforme
+> (ci-dessus). Le **poste Attaquant** lance les attaques depuis sa **propre
+> application unique** (console + indicateurs), décrite dans son dossier `attacker/`.
 
 ---
 

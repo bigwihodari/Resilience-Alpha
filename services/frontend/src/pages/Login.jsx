@@ -16,7 +16,7 @@ export default function Login() {
     try {
       const r = await login(username, password);
       setToken(r.access_token);
-      nav("/app");
+      nav("/hub");
     } catch (e) {
       setErr(e.message || "Échec de connexion");
     } finally {

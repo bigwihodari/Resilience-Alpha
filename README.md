@@ -18,10 +18,12 @@ le **prouve** en rejouant une transaction.
 | `frontend` | UI paiement + cockpit + console attaque | React + Tailwind (nginx) | ✅ P1 (paiement) |
 | `prometheus` / `grafana` / `loki` / `promtail` / `cadvisor` | observabilité (métriques, logs, CPU/mém) | Prometheus, Grafana, Loki | ✅ P2 |
 | `detector` | détection d'anomalie ML | Isolation Forest | ⏳ P4 |
+| `traffic-gen` | trafic légitime randomisé (baseline ML) | Python | ✅ P3 |
+| `attacker` | **app attaquant tout-en-un** (console + KPIs) | FastAPI + Chart.js | ✅ P3 |
 | `orchestrator` | moteur de remédiation (zero-touch) | FastAPI + Ansible | ⏳ P5 |
+| `detector` | détection d'anomalie ML | Isolation Forest | ⏳ P4 |
 | `waf` | pare-feu applicatif | Traefik + Coraza | ⏳ P7 |
 | `assistant` | assistant RAG | Ollama + LangChain | ⏳ P8 |
-| `attacker` | scripts + console d'attaque (PC distinct) | Python | ⏳ P3 |
 
 > 📖 **Nouvelle machine / équipe ?** Guide pas-à-pas détaillé dans
 > [`DEPLOIEMENT.md`](DEPLOIEMENT.md).
@@ -72,6 +74,19 @@ curl -s localhost:8000/transactions -H "Authorization: Bearer $TOKEN"
 docker compose down          # garde les données
 docker compose down -v       # supprime aussi la base
 ```
+
+## Poste Attaquant (application séparée)
+
+L'attaque se lance depuis une **application unique** dédiée, dans `attacker/`
+(à exécuter sur un PC distinct en conditions réelles) :
+
+```bash
+cd attacker
+cp .env.example .env     # régler TARGET_URL / TARGET_HOST
+./start.sh               # ou .\start.ps1
+```
+
+Console (tout-en-un) : http://localhost:8090 — voir [`attacker/README.md`](attacker/README.md).
 
 ## Sécurité
 

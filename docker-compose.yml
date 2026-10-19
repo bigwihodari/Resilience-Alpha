@@ -61,6 +61,19 @@ services:
     networks: [backend]
     restart: unless-stopped
 
+  traffic-gen:
+    build: ./services/traffic-gen
+    container_name: ra-traffic-gen
+    environment:
+      API_URL: http://api:8000
+      AUTH_URL: http://auth:8000
+      TG_INTERVAL: "1.5"
+    depends_on:
+      - api
+      - auth
+    networks: [backend]
+    restart: unless-stopped
+
   # ---------- Observabilité (P2) ----------
   prometheus:
     image: prom/prometheus:v2.55.1
