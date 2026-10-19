@@ -30,7 +30,7 @@ services:
       db:
         condition: service_healthy
     ports:
-      - "8001:8000"
+      - "${AUTH_PORT:-8001}:8000"
     networks: [backend]
     restart: unless-stopped
 
@@ -46,7 +46,7 @@ services:
       auth:
         condition: service_started
     ports:
-      - "8000:8000"
+      - "${API_PORT:-8000}:8000"
     networks: [backend]
     restart: unless-stopped
 
@@ -57,7 +57,7 @@ services:
       - api
       - auth
     ports:
-      - "8080:80"
+      - "${FRONTEND_PORT:-8080}:80"
     networks: [backend]
     restart: unless-stopped
 
@@ -72,7 +72,7 @@ services:
       - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
     ports:
-      - "9090:9090"
+      - "${PROMETHEUS_PORT:-9090}:9090"
     networks: [backend]
     restart: unless-stopped
 
@@ -84,7 +84,7 @@ services:
       - ./observability/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
       - loki_data:/loki
     ports:
-      - "3100:3100"
+      - "${LOKI_PORT:-3100}:3100"
     networks: [backend]
     restart: unless-stopped
 
@@ -111,8 +111,10 @@ services:
       - /var/run:/var/run:ro
       - /sys:/sys:ro
       - /var/lib/docker/:/var/lib/docker:ro
-    ports:
-      - "8081:8080"
+    # Pas de port publié : Prometheus scrape cAdvisor via le réseau interne
+    # (cadvisor:8080). Évite tout conflit de port sur les machines de l'équipe.
+    expose:
+      - "8080"
     networks: [backend]
     restart: unless-stopped
 
@@ -134,7 +136,7 @@ services:
       - prometheus
       - loki
     ports:
-      - "3000:3000"
+      - "${GRAFANA_PORT:-3000}:3000"
     networks: [backend]
     restart: unless-stopped
 

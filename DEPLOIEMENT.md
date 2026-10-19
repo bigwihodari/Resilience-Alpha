@@ -29,11 +29,14 @@ git clone https://github.com/bigwihodari/Resilience-Alpha.git
 cd Resilience-Alpha
 ```
 
-Pour **mettre à jour** plus tard (récupérer les dernières versions de l'équipe) :
+Pour **mettre à jour** plus tard (récupérer les dernières versions de l'équipe
+et redémarrer proprement, même si la stack tourne déjà) — une seule commande :
 
-```bash
-git pull
-```
+- **Windows** : `.\update.ps1`
+- **Git Bash / Linux / Mac** : `./update.sh`
+
+> Le script fait `git pull` puis `docker compose up -d --build --remove-orphans` :
+> il reconstruit et redémarre uniquement les conteneurs modifiés, sans tout casser.
 
 ---
 
@@ -100,7 +103,7 @@ docker compose down -v   # arrête ET efface la base de données
 | Problème | Solution |
 |---|---|
 | `error during connect ... docker_engine` | Docker Desktop n'est pas démarré → lance-le et attends « Engine running ». |
-| Un port est déjà utilisé (8080/8000/8001) | ferme l'appli qui l'utilise, ou change le port dans `docker-compose.yml`. |
+| Un port est déjà utilisé (8080/8000/8001/3000…) | ouvre `.env` et change le port concerné (`FRONTEND_PORT`, `API_PORT`, `GRAFANA_PORT`…), puis relance `./update.ps1`. cAdvisor n'expose plus de port (plus de conflit). |
 | La page ne charge pas tout de suite | attends 15-20 s que les conteneurs finissent de démarrer, puis rafraîchis. |
 | Repartir de zéro | `docker compose down -v` puis `docker compose up -d --build`. |
 
