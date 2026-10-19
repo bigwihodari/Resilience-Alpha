@@ -158,8 +158,8 @@ On y trouve, sans rien chercher ailleurs :
 ### e. Mettre à jour / arrêter
 
 ```bash
-git pull && docker compose up -d --build   # mise à jour
-docker compose down                        # arrêter
+.\update.ps1            # mise à jour (git pull + rebuild) — ou ./update.sh
+docker compose down     # arrêter
 ```
 
 > ⚠️ Les attaques sont **strictement limitées** à la cible configurée et au labo
@@ -167,44 +167,63 @@ docker compose down                        # arrêter
 
 ---
 
-## 8. Montage haute disponibilité (5 PC)
+## 8. Installation par machine (montage 5 PC) — quelle version, où
 
-Topologie complète : 2 serveurs (principal + secours), 2 clients, 1 attaquant.
+Un seul dépôt, **4 versions à lancer** selon le poste. Sur **chaque** PC d'abord :
+`git clone https://github.com/bigwihodari/Resilience-Alpha.git` puis `cd Resilience-Alpha`.
+(Windows : `.\start.ps1` / `.\update.ps1` — Git Bash/Linux : `./start.sh` / `./update.sh`.)
 
-| PC | Rôle | Lancement |
-|---|---|---|
-| **HOST-PRINCIPAL** (192.168.137.1) | Serveur actif + cockpit | `./start.ps1` (ROLE=primary par défaut) |
-| **HOST-BACKUP** (192.168.137.2) | Serveur de secours | compose complet avec `ROLE=backup` + `PEER_API_URL=http://192.168.137.1:8000` |
-| **CLIENT-A / CLIENT-B** | App client | `cd client` puis `./start.ps1` |
-| **ATTAQUANT** | Offensive | `cd attacker` puis `./start.ps1` |
+| PC | Version à installer | Dossier | Installer / lancer | Mettre à jour |
+|---|---|---|---|---|
+| **HOST-PRINCIPAL** (192.168.137.1) | Serveur (principal) | racine | `.\start.ps1` | `.\update.ps1` |
+| **HOST-BACKUP** (192.168.137.2) | Serveur (secours) | racine | `.\start.ps1` | `.\update.ps1` |
+| **CLIENT-A / CLIENT-B** | App client | `client\` | `cd client` ; `.\start.ps1` | `cd client` ; `.\update.ps1` |
+| **ATTAQUANT** | Console d'attaque | `attacker\` | `cd attacker` ; `.\start.ps1` | `cd attacker` ; `.\update.ps1` |
 
-### Serveur de secours (HOST-BACKUP, 2e PC)
-Dans un `.env` à la racine du projet, régler puis lancer la stack complète :
+Le rôle du serveur (principal / secours) est fixé par `ROLE` dans le `.env` ; les
+scripts `start`/`update` l'affichent au lancement.
+
+### 8.1 — HOST-PRINCIPAL (`.env` à la racine)
+```
+ROLE=primary
+JWT_SECRET=<un-secret-commun-aux-2-serveurs>
+REPL_TOKEN=<un-token-commun-aux-2-serveurs>
+```
+`.\start.ps1` → cockpit : http://localhost:8080
+
+### 8.2 — HOST-BACKUP (`.env` à la racine) — MÊMES secrets que le principal
 ```
 ROLE=backup
 PEER_API_URL=http://192.168.137.1:8000
-JWT_SECRET=...        # IDENTIQUE au principal (tokens valides des deux côtés)
-REPL_TOKEN=...        # IDENTIQUE au principal
+JWT_SECRET=<identique au principal>
+REPL_TOKEN=<identique au principal>
 ```
-Le backup réplique en continu les comptes et les clés d'idempotence du principal.
+`.\start.ps1` → le backup réplique le principal (comptes + clés d'idempotence).
 
-### Postes clients (`client/.env`)
+### 8.3 — CLIENT-A / CLIENT-B (`client\.env`)
 ```
-HOST_PRIMARY=192.168.137.1    HOST_PRIMARY_API_PORT=8000   HOST_PRIMARY_AUTH_PORT=8001
-HOST_BACKUP=192.168.137.2     HOST_BACKUP_API_PORT=8000    HOST_BACKUP_AUTH_PORT=8001
+HOST_PRIMARY=192.168.137.1   HOST_PRIMARY_API_PORT=8000   HOST_PRIMARY_AUTH_PORT=8001
+HOST_BACKUP=192.168.137.2    HOST_BACKUP_API_PORT=8000    HOST_BACKUP_AUTH_PORT=8001
 ```
-Connexion : `alice` sur CLIENT-A, `bob` sur CLIENT-B (ils se paient en direct).
+`cd client` ; `.\start.ps1` → http://localhost:8095 (connexion : `alice` sur A, `bob` sur B).
+
+### 8.4 — ATTAQUANT (`attacker\.env`)
+```
+TARGET_URL=http://192.168.137.1:8080
+TARGET_HOST=192.168.137.1
+```
+`cd attacker` ; `.\start.ps1` → console : http://localhost:8090
 
 ### Comment ça bascule
 Chaque app client vise le principal ; s'il tombe, **nginx route automatiquement vers
 le backup** (qui a répliqué comptes + clés). Une transaction en cours est **reprise
-sans double débit** grâce à la clé d'idempotence. Le backup se **promeut** autoritaire
-après quelques secondes d'absence du principal.
+sans double débit** (clé d'idempotence). Le backup se **promeut** autoritaire après
+quelques secondes d'absence du principal.
 
 ### Test local (une seule machine)
 ```bash
-docker compose -f docker-compose.backup.yml up -d --build   # backup en 8010/8011
-cd client && cp .env.example .env && ./start.sh             # .env : backup 8010/8011
+docker compose -f docker-compose.backup.yml up -d --build   # backup local (8010/8011)
+cd client && cp .env.example .env && ./start.sh             # client/.env : backup 8010/8011
 ./scripts/recette-ha.sh                                      # recette de bascule
 ```
 
