@@ -1,0 +1,21 @@
+name: resilience-alpha-client
+
+# Application CLIENT — à déployer sur un poste client (CLIENT-A, CLIENT-B).
+# Se connecte au serveur HOST ; ne contient que login + paiement + recherche.
+
+services:
+  client:
+    build: ./app
+    container_name: ra-client
+    environment:
+      # Adresse du serveur HOST principal (en labo : 192.168.137.1).
+      HOST_PRIMARY: ${HOST_PRIMARY:-host.docker.internal}
+      # Adresse du serveur de secours (utilisé pour la bascule en P14).
+      HOST_BACKUP: ${HOST_BACKUP:-host.docker.internal}
+      # N'autorise envsubst que sur les variables HOST_* (préserve $host nginx).
+      NGINX_ENVSUBST_FILTER: "HOST_"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${CLIENT_PORT:-8095}:80"
+    restart: unless-stopped
