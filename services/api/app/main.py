@@ -13,8 +13,9 @@ import jwt
 from fastapi import FastAPI, HTTPException, Depends, Header
 from pydantic import BaseModel
 from sqlalchemy import (
-    create_engine, Integer, String, Numeric, ForeignKey, DateTime, func, select,
+    create_engine, Integer, String, Numeric, ForeignKey, DateTime, func, select, text,
 )
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, Session
 from prometheus_fastapi_instrumentator import Instrumentator
 from prometheus_client import Counter
@@ -73,6 +74,7 @@ class Transaction(Base):
     type: Mapped[str] = mapped_column(String(16))
     recipient: Mapped[str] = mapped_column(String(128), nullable=True)
     status: Mapped[str] = mapped_column(String(16))
+    idem_key: Mapped[str] = mapped_column(String(64), nullable=True)  # clé d'idempotence (reprise)
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -116,12 +118,17 @@ app = FastAPI(title="Resilience-Alpha — Payment API")
 
 class TxIn(BaseModel):
     amount: float
-    recipient: str | None = None
+    recipient: str | None = None           # username de l'ami à payer (ou marchand externe)
+    idempotency_key: str | None = None     # pour reprendre une transaction sans double débit
 
 
 @app.on_event("startup")
 def startup():
     wait_for_db()
+    # Migration légère : clé d'idempotence (compatible avec une base existante).
+    with engine().begin() as c:
+        c.execute(text("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS idem_key VARCHAR(64)"))
+        c.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_tx_idem ON transactions(idem_key) WHERE idem_key IS NOT NULL"))
 
 
 @app.get("/health")
@@ -146,24 +153,67 @@ def create_transaction(body: TxIn, user: str = Depends(current_user)):
     waf_scan("api/transactions", recipient=body.recipient or "")
     if body.amount <= 0:
         raise HTTPException(400, "amount must be positive")
+    key = body.idempotency_key
     with Session(engine()) as s:
         u = s.scalar(select(User).where(User.username == user))
         acc = s.scalar(select(Account).where(Account.user_id == u.id)) if u else None
         if acc is None:
             raise HTTPException(404, "account not found")
+
+        # Reprise exactly-once : si la clé a déjà été traitée, on renvoie le résultat
+        # SANS ré-appliquer (cas d'un ré-essai après bascule sur le backup).
+        if key:
+            prior = s.scalar(select(Transaction).where(Transaction.idem_key == key))
+            if prior is not None:
+                return {"id": prior.id, "status": prior.status, "amount": float(prior.amount),
+                        "recipient": prior.recipient, "new_balance": float(acc.balance),
+                        "resumed": True}
+
+        # Destinataire : utilisateur connu -> transfert (crédit) ; sinon marchand externe.
+        rec_user = s.scalar(select(User).where(User.username == body.recipient)) if body.recipient else None
+        if rec_user is not None and rec_user.id == u.id:
+            raise HTTPException(400, "cannot pay yourself")
         if float(acc.balance) < body.amount:
-            tx = Transaction(account_id=acc.id, amount=body.amount, type="debit",
-                             recipient=body.recipient, status="refused")
-            s.add(tx)
-            s.commit()
             raise HTTPException(402, "insufficient funds")
+
         acc.balance = float(acc.balance) - body.amount
         tx = Transaction(account_id=acc.id, amount=body.amount, type="debit",
-                         recipient=body.recipient, status="completed")
+                         recipient=body.recipient, status="completed", idem_key=key)
         s.add(tx)
-        s.commit()
+        credited = False
+        if rec_user is not None:
+            rec_acc = s.scalar(select(Account).where(Account.user_id == rec_user.id))
+            if rec_acc is not None:
+                rec_acc.balance = float(rec_acc.balance) + body.amount
+                s.add(Transaction(account_id=rec_acc.id, amount=body.amount, type="credit",
+                                  recipient=user, status="completed"))
+                credited = True
+        try:
+            s.commit()
+        except IntegrityError:
+            # Course sur la clé d'idempotence : la transaction a déjà été appliquée.
+            s.rollback()
+            prior = s.scalar(select(Transaction).where(Transaction.idem_key == key))
+            acc = s.scalar(select(Account).where(Account.user_id == u.id))
+            if prior is not None:
+                return {"id": prior.id, "status": prior.status, "amount": float(prior.amount),
+                        "recipient": prior.recipient, "new_balance": float(acc.balance),
+                        "resumed": True}
+            raise
         return {"id": tx.id, "status": "completed", "amount": body.amount,
-                "new_balance": float(acc.balance)}
+                "recipient": body.recipient, "credited": credited,
+                "new_balance": float(acc.balance), "resumed": False}
+
+
+@app.get("/users")
+def list_users(q: str = "", user: str = Depends(current_user)):
+    """Annuaire : clients enregistrés disponibles (recherche par nom)."""
+    with Session(engine()) as s:
+        stmt = select(User.username).where(User.username != user)
+        if q:
+            stmt = stmt.where(User.username.ilike(f"%{q}%"))
+        rows = s.scalars(stmt.order_by(User.username).limit(20)).all()
+    return [{"username": r} for r in rows]
 
 
 @app.get("/transactions")

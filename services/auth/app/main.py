@@ -137,15 +137,16 @@ class Creds(BaseModel):
 @app.on_event("startup")
 def startup():
     wait_for_db()
-    # Les tables sont créées par db/init.sql ; on sème le compte de démo.
+    # Les tables sont créées par db/init.sql ; on sème les comptes clients de démo.
+    seeds = [(DEMO_USER, DEMO_PASSWORD), ("bob", DEMO_PASSWORD)]
     with Session(engine()) as s:
-        u = s.scalar(select(User).where(User.username == DEMO_USER))
-        if u is None:
-            u = User(username=DEMO_USER, password_hash=hash_pw(DEMO_PASSWORD))
-            s.add(u)
-            s.flush()
-            s.add(Account(user_id=u.id, balance=1000, currency="EUR"))
-            s.commit()
+        for username, pw in seeds:
+            if s.scalar(select(User).where(User.username == username)) is None:
+                u = User(username=username, password_hash=hash_pw(pw))
+                s.add(u)
+                s.flush()
+                s.add(Account(user_id=u.id, balance=1000, currency="EUR"))
+        s.commit()
 
 
 @app.get("/health")
