@@ -26,6 +26,7 @@ tb(s, "WORKSHOP EPSI BAC+5", { x: 0.8, y: 1.02, w: 2.6, h: 0.38, fontSize: 11, b
 tb(s, "PROJECT RESILIENCE-ALPHA", { x: 0.8, y: 2.0, w: 11.7, h: 1.2, fontSize: 48, bold: true, color: WHITE, fontFace: HEAD, margin: 0 });
 tb(s, "Cyber-résilience et reprise autonome d'une plateforme de paiement", { x: 0.8, y: 3.3, w: 11.5, h: 0.6, fontSize: 20, color: LAV, margin: 0 });
 tb(s, "« Tout système finit par tomber. La vraie question : le vôtre saura-t-il se relever seul ? »", { x: 0.8, y: 4.3, w: 11, h: 0.6, fontSize: 14, italic: true, color: LIGHT, margin: 0 });
+tb(s, "Équipe : Téo Debay · Timéo Quehen · Hodari Bigwi · Théo Vambre · Adrien Planquelle", { x: 0.8, y: 5.2, w: 11.7, h: 0.4, fontSize: 13, color: WHITE, margin: 0 });
 tb(s, "Consortium Workshop2026-M2-G<n>  ·  Octobre 2026  ·  github.com/bigwihodari/Resilience-Alpha", { x: 0.8, y: 6.7, w: 11.7, h: 0.4, fontSize: 11, color: LAV, margin: 0 });
 
 /* 2 — Le défi */
