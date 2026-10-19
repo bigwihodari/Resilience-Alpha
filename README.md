@@ -16,7 +16,7 @@ le **prouve** en rejouant une transaction.
 | `auth` | authentification, émission de JWT | FastAPI | ✅ P1 |
 | `api` | API de paiement (transactions fictives) | FastAPI | ✅ P1 |
 | `frontend` | UI paiement + cockpit + console attaque | React + Tailwind (nginx) | ✅ P1 (paiement) |
-| `prometheus` / `grafana` / `loki` | observabilité | — | ⏳ P2 |
+| `prometheus` / `grafana` / `loki` / `promtail` / `cadvisor` | observabilité (métriques, logs, CPU/mém) | Prometheus, Grafana, Loki | ✅ P2 |
 | `detector` | détection d'anomalie ML | Isolation Forest | ⏳ P4 |
 | `orchestrator` | moteur de remédiation (zero-touch) | FastAPI + Ansible | ⏳ P5 |
 | `waf` | pare-feu applicatif | Traefik + Coraza | ⏳ P7 |
@@ -44,6 +44,9 @@ Accès :
 - **Frontend (paiement)** : http://localhost:8080  (démo : `alice` / `password123`)
 - **API** : http://localhost:8000  (`/docs` pour Swagger)
 - **Auth** : http://localhost:8001
+- **Grafana** : http://localhost:3000  (`admin` / `admin`, datasources + dashboard auto-provisionnés)
+- **Prometheus** : http://localhost:9090  (`/targets` pour voir les cibles)
+- **cAdvisor** : http://localhost:8081
 
 ## Vérifier (chaîne login → paiement)
 
