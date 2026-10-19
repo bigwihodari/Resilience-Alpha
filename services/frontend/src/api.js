@@ -28,3 +28,29 @@ export const getAccount = () => req("/api/accounts/me");
 export const createTx = (amount, recipient) =>
   req("/api/transactions", { method: "POST", body: JSON.stringify({ amount, recipient }) });
 export const listTx = () => req("/api/transactions");
+
+// ---- Prometheus (via proxy nginx /prom) : graphes intégrés au cockpit ----
+export async function promInstant(query) {
+  try {
+    const r = await fetch(`/prom/api/v1/query?query=${encodeURIComponent(query)}`);
+    const j = await r.json();
+    return j?.data?.result ?? [];
+  } catch { return []; }
+}
+export async function promRange(query, minutes = 15, step = 15) {
+  try {
+    const end = Math.floor(Date.now() / 1000);
+    const start = end - minutes * 60;
+    const r = await fetch(
+      `/prom/api/v1/query_range?query=${encodeURIComponent(query)}&start=${start}&end=${end}&step=${step}`
+    );
+    const j = await r.json();
+    return j?.data?.result ?? [];
+  } catch { return []; }
+}
+// Première valeur scalaire d'un résultat instantané.
+export function scalar(result) {
+  if (!result || !result.length) return 0;
+  const v = parseFloat(result[0].value?.[1]);
+  return Number.isFinite(v) ? v : 0;
+}
