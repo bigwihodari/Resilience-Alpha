@@ -45,6 +45,8 @@ services:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-resilience}:${POSTGRES_PASSWORD:-resilience}@db:5432/${POSTGRES_DB:-resilience}
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
       ADMIN_TOKEN: ${ADMIN_TOKEN:-orchestrator-admin-token}
+      ROLE: ${ROLE:-primary}
+      REPL_TOKEN: ${REPL_TOKEN:-repl-secret}
     depends_on:
       db:
         condition: service_healthy

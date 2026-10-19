@@ -1,0 +1,70 @@
+name: resilience-alpha-backup
+
+# Host de SECOURS (pour test local sur une seule machine).
+# En labo réel : le 2e PC exécute le docker-compose.yml complet avec ROLE=backup
+# et PEER_API_URL pointant vers le principal. Ici on lance une version minimale
+# (db + auth + api) avec des ports décalés (api 8010, auth 8011).
+
+services:
+  db-backup:
+    image: postgres:16-alpine
+    container_name: ra-db-backup
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-resilience}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-resilience}
+      POSTGRES_DB: ${POSTGRES_DB:-resilience}
+    volumes:
+      - db_backup_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-resilience}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    networks: [backup]
+
+  auth-backup:
+    build: ./services/auth
+    container_name: ra-auth-backup
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-resilience}:${POSTGRES_PASSWORD:-resilience}@db-backup:5432/${POSTGRES_DB:-resilience}
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-orchestrator-admin-token}
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-internal-trusted-token}
+    depends_on:
+      db-backup:
+        condition: service_healthy
+    ports:
+      - "${AUTH_BACKUP_PORT:-8011}:8000"
+    networks: [backup]
+    restart: unless-stopped
+
+  api-backup:
+    build: ./services/api
+    container_name: ra-api-backup
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-resilience}:${POSTGRES_PASSWORD:-resilience}@db-backup:5432/${POSTGRES_DB:-resilience}
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-orchestrator-admin-token}
+      ROLE: backup
+      PEER_API_URL: ${PEER_API_URL:-http://host.docker.internal:8000}
+      REPL_TOKEN: ${REPL_TOKEN:-repl-secret}
+      REPL_INTERVAL: "2"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      db-backup:
+        condition: service_healthy
+    ports:
+      - "${API_BACKUP_PORT:-8010}:8000"
+    networks: [backup]
+    restart: unless-stopped
+
+volumes:
+  db_backup_data:
+
+networks:
+  backup:
+    driver: bridge

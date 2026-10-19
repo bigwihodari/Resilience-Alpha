@@ -7,9 +7,11 @@ détection ML et la supervision).
 import os
 import re
 import time
+import threading
 import datetime as dt
 
 import jwt
+import requests
 from fastapi import FastAPI, HTTPException, Depends, Header
 from pydantic import BaseModel
 from sqlalchemy import (
@@ -24,6 +26,14 @@ DATABASE_URL = os.environ["DATABASE_URL"]
 JWT_SECRET = os.environ.get("JWT_SECRET", "dev-secret")
 JWT_ALG = "HS256"
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "orchestrator-admin-token")
+
+# Réplication / haute disponibilité
+ROLE = os.environ.get("ROLE", "primary")              # primary | backup
+PEER_API_URL = os.environ.get("PEER_API_URL", "")     # backup : URL de l'api du principal
+REPL_TOKEN = os.environ.get("REPL_TOKEN", "repl-secret")
+REPL_INTERVAL = float(os.environ.get("REPL_INTERVAL", "2"))
+repl_state = {"role": ROLE, "promoted": ROLE == "primary", "peer": PEER_API_URL,
+              "last_sync": None, "fails": 0}
 
 # --- WAF applicatif (signatures type OWASP) ---
 WAF_BLOCKED = Counter("waf_blocked_total", "Requêtes bloquées par le WAF applicatif", ["rule"])
@@ -56,6 +66,7 @@ class User(Base):
     __tablename__ = "users"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     username: Mapped[str] = mapped_column(String(64), unique=True)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=True)
 
 
 class Account(Base):
@@ -129,6 +140,8 @@ def startup():
     with engine().begin() as c:
         c.execute(text("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS idem_key VARCHAR(64)"))
         c.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_tx_idem ON transactions(idem_key) WHERE idem_key IS NOT NULL"))
+    if ROLE == "backup" and PEER_API_URL:
+        threading.Thread(target=replicate_loop, daemon=True).start()
 
 
 @app.get("/health")
@@ -264,6 +277,99 @@ def integrity(x_admin_token: str = Header(default=None)):
         "suspicious_users": suspicious,
         "negative_balances": negative,
     }
+
+
+# ---------------- Réplication / haute disponibilité ----------------
+@app.get("/repl/status")
+def repl_status():
+    return repl_state
+
+
+@app.get("/repl/dump")
+def repl_dump(x_repl_token: str = Header(default=None)):
+    """État à répliquer (lu par le backup). Protégé par un token interne."""
+    if x_repl_token != REPL_TOKEN:
+        raise HTTPException(403, "forbidden")
+    with Session(engine()) as s:
+        users = s.scalars(select(User)).all()
+        accounts = s.scalars(select(Account)).all()
+        id2name = {u.id: u.username for u in users}
+        acc_by_user = {}
+        out_accounts = []
+        for a in accounts:
+            uname = id2name.get(a.user_id)
+            acc_by_user[a.id] = uname
+            out_accounts.append({"username": uname, "balance": float(a.balance), "currency": a.currency})
+        txs = s.scalars(select(Transaction).where(Transaction.idem_key.is_not(None))).all()
+        out_tx = [{"idem_key": t.idem_key, "username": acc_by_user.get(t.account_id),
+                   "amount": float(t.amount), "type": t.type, "recipient": t.recipient,
+                   "status": t.status} for t in txs]
+    return {
+        "users": [{"username": u.username, "password_hash": u.password_hash} for u in users],
+        "accounts": out_accounts,
+        "transactions": out_tx,
+    }
+
+
+def apply_dump(data):
+    with Session(engine()) as s:
+        for u in data.get("users", []):
+            existing = s.scalar(select(User).where(User.username == u["username"]))
+            if existing is None:
+                nu = User(username=u["username"], password_hash=u.get("password_hash"))
+                s.add(nu)
+                s.flush()
+                s.add(Account(user_id=nu.id, balance=0, currency="EUR"))
+            elif u.get("password_hash"):
+                existing.password_hash = u["password_hash"]
+        s.flush()
+        for a in data.get("accounts", []):
+            usr = s.scalar(select(User).where(User.username == a["username"]))
+            if usr is None:
+                continue
+            acc = s.scalar(select(Account).where(Account.user_id == usr.id))
+            if acc is None:
+                s.add(Account(user_id=usr.id, balance=a["balance"], currency=a.get("currency", "EUR")))
+            else:
+                acc.balance = a["balance"]
+        for t in data.get("transactions", []):
+            if not t.get("idem_key"):
+                continue
+            if s.scalar(select(Transaction).where(Transaction.idem_key == t["idem_key"])) is not None:
+                continue
+            usr = s.scalar(select(User).where(User.username == t.get("username")))
+            acc = s.scalar(select(Account).where(Account.user_id == usr.id)) if usr else None
+            if acc is not None:
+                s.add(Transaction(account_id=acc.id, amount=t["amount"], type=t["type"],
+                                  recipient=t.get("recipient"), status=t.get("status", "completed"),
+                                  idem_key=t["idem_key"]))
+        s.commit()
+
+
+def replicate_loop():
+    """Backup : réplique l'état du principal. Après plusieurs échecs consécutifs,
+    se promeut (devient autoritaire) et cesse de répliquer pour ne pas écraser ses
+    propres transactions post-bascule."""
+    print(f"[repl] backup : réplication depuis {PEER_API_URL}", flush=True)
+    while True:
+        time.sleep(REPL_INTERVAL)
+        if repl_state["promoted"]:
+            return
+        try:
+            r = requests.get(f"{PEER_API_URL}/repl/dump", headers={"X-Repl-Token": REPL_TOKEN}, timeout=4)
+            if r.status_code == 200:
+                apply_dump(r.json())
+                repl_state["last_sync"] = time.time()
+                repl_state["fails"] = 0
+            else:
+                repl_state["fails"] += 1
+        except Exception:
+            repl_state["fails"] += 1
+        if repl_state["fails"] >= 3 and not repl_state["promoted"]:
+            repl_state["promoted"] = True
+            repl_state["role"] = "primary (promu)"
+            print("[repl] principal injoignable -> PROMOTION du backup (autoritaire)", flush=True)
+            return
 
 
 Instrumentator().instrument(app).expose(app)
