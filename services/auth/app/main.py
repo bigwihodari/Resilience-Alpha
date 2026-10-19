@@ -9,7 +9,7 @@ import datetime as dt
 
 import bcrypt
 import jwt
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header, Body
 from pydantic import BaseModel
 from sqlalchemy import create_engine, Integer, String, Numeric, ForeignKey, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, Session
@@ -21,6 +21,30 @@ JWT_ALG = "HS256"
 JWT_TTL_MIN = int(os.environ.get("JWT_TTL_MIN", "60"))
 DEMO_USER = os.environ.get("DEMO_USER", "alice")
 DEMO_PASSWORD = os.environ.get("DEMO_PASSWORD", "password123")
+ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "orchestrator-admin-token")
+INTERNAL_TOKEN = os.environ.get("INTERNAL_TOKEN", "internal-trusted-token")
+
+import threading as _threading
+
+# Mode "bouclier" : load-shedding activable par le moteur de remédiation.
+# Quand il est actif, les requêtes /login NON internes au-delà d'un débit sont
+# rejetées immédiatement (429) AVANT le calcul bcrypt coûteux => l'auth tient.
+_protect = {"enabled": False, "rate": 8.0}
+_bucket = {"tokens": 0.0, "last": time.time()}
+_plock = _threading.Lock()
+
+
+def _allow_request() -> bool:
+    with _plock:
+        if not _protect["enabled"]:
+            return True
+        now = time.time()
+        _bucket["tokens"] = min(_protect["rate"], _bucket["tokens"] + (now - _bucket["last"]) * _protect["rate"])
+        _bucket["last"] = now
+        if _bucket["tokens"] >= 1:
+            _bucket["tokens"] -= 1
+            return True
+        return False
 
 
 class Base(DeclarativeBase):
@@ -115,8 +139,27 @@ def register(c: Creds):
     return {"status": "created", "username": c.username}
 
 
+@app.get("/protect")
+def protect_status():
+    return {"protection": _protect}
+
+
+@app.post("/admin/protect")
+def admin_protect(body: dict = Body(...), x_admin_token: str = Header(default=None)):
+    if x_admin_token != ADMIN_TOKEN:
+        raise HTTPException(403, "forbidden")
+    _protect["enabled"] = bool(body.get("enabled", False))
+    if "rate" in body:
+        _protect["rate"] = float(body["rate"])
+    return {"protection": _protect}
+
+
 @app.post("/login")
-def login(c: Creds):
+def login(c: Creds, x_internal_token: str = Header(default=None)):
+    # Les clients internes de confiance (canari, trafic légitime) ne sont jamais
+    # délestés ; le trafic externe est limité quand le bouclier est actif.
+    if x_internal_token != INTERNAL_TOKEN and not _allow_request():
+        raise HTTPException(429, "service protégé (débit limité)")
     with Session(engine()) as s:
         u = s.scalar(select(User).where(User.username == c.username))
         if u is None or not check_pw(c.password, u.password_hash):

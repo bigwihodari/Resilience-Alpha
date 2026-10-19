@@ -26,6 +26,8 @@ services:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-resilience}:${POSTGRES_PASSWORD:-resilience}@db:5432/${POSTGRES_DB:-resilience}
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
       DEMO_PASSWORD: ${DEMO_PASSWORD:-password123}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-orchestrator-admin-token}
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-internal-trusted-token}
     depends_on:
       db:
         condition: service_healthy
@@ -68,6 +70,7 @@ services:
       API_URL: http://api:8000
       AUTH_URL: http://auth:8000
       TG_INTERVAL: "1.5"
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-internal-trusted-token}
     depends_on:
       - api
       - auth
@@ -139,8 +142,29 @@ services:
       INTERVAL: "5"
       WARMUP_SAMPLES: "30"
       CONTAMINATION: "0.02"
+      MODEL_PATH: /app/model/detector.joblib
+    volumes:
+      - detector_model:/app/model
     depends_on:
       - prometheus
+    networks: [backend]
+    restart: unless-stopped
+
+  orchestrator:
+    build: ./services/orchestrator
+    container_name: ra-orchestrator
+    environment:
+      DETECTOR_URL: http://detector:8000
+      AUTH_URL: http://auth:8000
+      API_URL: http://api:8000
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-orchestrator-admin-token}
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-internal-trusted-token}
+      CANARY_USER: ${DEMO_USER:-alice}
+      CANARY_PASSWORD: ${DEMO_PASSWORD:-password123}
+    depends_on:
+      - detector
+      - auth
+      - api
     networks: [backend]
     restart: unless-stopped
 
@@ -171,6 +195,7 @@ volumes:
   prometheus_data:
   loki_data:
   grafana_data:
+  detector_model:
 
 networks:
   backend:

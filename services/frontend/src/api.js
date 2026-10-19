@@ -48,6 +48,14 @@ export async function promRange(query, minutes = 15, step = 15) {
     return j?.data?.result ?? [];
   } catch { return []; }
 }
+// État + timeline du moteur de remédiation (via proxy nginx /orch).
+export async function orchStatus() {
+  try {
+    const r = await fetch("/orch/status");
+    return await r.json();
+  } catch { return null; }
+}
+
 // Première valeur scalaire d'un résultat instantané.
 export function scalar(result) {
   if (!result || !result.length) return 0;

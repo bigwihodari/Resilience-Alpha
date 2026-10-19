@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
-import { promInstant, promRange, scalar } from "../api.js";
+import { promInstant, promRange, scalar, orchStatus } from "../api.js";
 
 const SERVICES = [
   { job: "api", label: "API paiement" },
@@ -27,6 +27,7 @@ export default function Cockpit() {
   const [latSeries, setLatSeries] = useState([]);
   const [ml, setMl] = useState({ score: 0, flag: false, trained: false });
   const [anomSeries, setAnomSeries] = useState([]);
+  const [rem, setRem] = useState(null);
   const timer = useRef(null);
 
   async function refresh() {
@@ -62,6 +63,9 @@ export default function Cockpit() {
     ]);
     setMl({ score: Math.round(scalar(anom) * 10) / 10, flag: scalar(flag) === 1, trained: scalar(trained) === 1 });
     setAnomSeries(rangeToSeries(anomRange));
+
+    // Moteur de remédiation
+    setRem(await orchStatus());
   }
 
   useEffect(() => {
@@ -158,10 +162,53 @@ export default function Cockpit() {
         </div>
       </div>
 
-      {/* Placeholder remédiation (P5) */}
-      <div className="bg-white/70 border border-dashed border-lav rounded-2xl p-5 text-center text-ink/50 mb-6">
-        🔁 Timeline de remédiation automatique — <b>Phase 5</b>
-      </div>
+      {/* Remédiation autonome (P5) */}
+      <h2 className="text-sm font-bold uppercase tracking-wide text-accent mb-2">Remédiation autonome</h2>
+      {(() => {
+        const st = rem?.state || "NORMAL";
+        const steps = ["NORMAL", "REMEDIATING", "VERIFYING", "RECOVERED"];
+        const labels = { NORMAL: "Surveillance", REMEDIATING: "Action", VERIFYING: "Vérification", RECOVERED: "Rétabli" };
+        const idx = Math.max(0, steps.indexOf(st));
+        const badge =
+          st === "NORMAL" ? ["bg-green-100 text-green-700", "● Surveillance — normal"] :
+          st === "RECOVERED" ? ["bg-green-100 text-green-700", "✓ Service rétabli (sous protection)"] :
+          ["bg-amber-100 text-amber-700", "⟳ Remédiation en cours…"];
+        const kindColor = { success: "text-green-700", alert: "text-red-700", error: "text-red-700", action: "text-accent", info: "text-ink/60" };
+        return (
+          <div className="bg-white rounded-2xl shadow p-5 mb-6">
+            <div className="flex flex-wrap items-center gap-3 mb-4">
+              <span className={`text-sm font-bold px-3 py-1 rounded-full ${badge[0]}`}>{badge[1]}</span>
+              {rem?.protection && <span className="text-sm font-semibold text-accent bg-lavsoft px-3 py-1 rounded-full">🛡️ Bouclier actif</span>}
+              {rem?.last_canary && (
+                <span className={`text-sm px-3 py-1 rounded-full ${rem.last_canary.ok ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
+                  Canari : {rem.last_canary.ok ? `✓ OK (${rem.last_canary.latency_ms} ms)` : `✗ ${rem.last_canary.detail}`}
+                </span>
+              )}
+            </div>
+            {/* Stepper */}
+            <div className="flex items-center gap-2 mb-4">
+              {steps.map((s, i) => (
+                <div key={s} className="flex-1 text-center">
+                  <div className={`h-1.5 rounded-full ${i <= idx ? "bg-accent" : "bg-lavsoft"}`}></div>
+                  <div className={`text-xs mt-1 ${i <= idx ? "text-accent font-semibold" : "text-ink/40"}`}>{labels[s]}</div>
+                </div>
+              ))}
+            </div>
+            {/* Timeline */}
+            <div className="max-h-56 overflow-auto text-sm divide-y divide-lavsoft">
+              {(rem?.timeline || []).slice().reverse().map((e, i) => (
+                <div key={i} className="py-1.5 flex gap-3">
+                  <span className="text-ink/40 tabular-nums">{e.t}</span>
+                  <span className={kindColor[e.kind] || "text-ink/70"}>{e.label}</span>
+                </div>
+              ))}
+              {(!rem || !rem.timeline || rem.timeline.length === 0) && (
+                <div className="py-2 text-ink/40">En attente de l'orchestrateur…</div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Outils avancés (repli, optionnel) */}
       <details className="bg-white/60 rounded-xl p-3 text-sm">

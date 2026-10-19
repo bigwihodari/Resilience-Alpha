@@ -15,6 +15,7 @@ AUTH = os.environ.get("AUTH_URL", "http://auth:8000")
 USER = os.environ.get("TG_USER", "trafficbot")
 PASSWORD = os.environ.get("TG_PASSWORD", "trafficbot-pw")
 BASE_INTERVAL = float(os.environ.get("TG_INTERVAL", "1.5"))  # secondes (moyenne)
+INTERNAL_TOKEN = os.environ.get("INTERNAL_TOKEN", "internal-trusted-token")
 
 
 def wait_up():
@@ -36,7 +37,9 @@ def ensure_account():
 
 
 def login():
-    r = requests.post(f"{AUTH}/login", json={"username": USER, "password": PASSWORD}, timeout=5)
+    # Client interne de confiance : exempté du bouclier anti-DoS.
+    r = requests.post(f"{AUTH}/login", json={"username": USER, "password": PASSWORD},
+                      headers={"X-Internal-Token": INTERNAL_TOKEN}, timeout=5)
     r.raise_for_status()
     return r.json()["access_token"]
 
