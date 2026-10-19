@@ -15,6 +15,13 @@ async function req(path, opts = {}) {
   const t = getToken();
   if (t) headers["Authorization"] = `Bearer ${t}`;
   const res = await fetch(path, { ...opts, headers });
+  // Jeton expiré / invalide (JWT 60 min) : on renvoie vers le login.
+  // Hors /auth/ pour garder le message "invalid credentials" du formulaire de connexion.
+  if (res.status === 401 && t && !path.startsWith("/auth/")) {
+    clearToken();
+    window.location.href = "/";
+    return new Promise(() => {}); // la page se recharge : ne pas afficher d'erreur
+  }
   if (!res.ok) {
     const e = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(e.detail || `HTTP ${res.status}`);
