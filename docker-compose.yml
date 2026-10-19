@@ -131,6 +131,19 @@ services:
     networks: [backend]
     restart: unless-stopped
 
+  detector:
+    build: ./services/detector
+    container_name: ra-detector
+    environment:
+      PROM_URL: http://prometheus:9090
+      INTERVAL: "5"
+      WARMUP_SAMPLES: "30"
+      CONTAMINATION: "0.02"
+    depends_on:
+      - prometheus
+    networks: [backend]
+    restart: unless-stopped
+
   grafana:
     image: grafana/grafana:11.3.1
     container_name: ra-grafana

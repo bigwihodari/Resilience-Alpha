@@ -25,6 +25,8 @@ export default function Cockpit() {
   const [kpi, setKpi] = useState({ reqs: 0, p95: 0, c4xx: 0, c5xx: 0 });
   const [reqSeries, setReqSeries] = useState([]);
   const [latSeries, setLatSeries] = useState([]);
+  const [ml, setMl] = useState({ score: 0, flag: false, trained: false });
+  const [anomSeries, setAnomSeries] = useState([]);
   const timer = useRef(null);
 
   async function refresh() {
@@ -50,6 +52,16 @@ export default function Cockpit() {
     ]);
     setReqSeries(rangeToSeries(r1));
     setLatSeries(rangeToSeries(r2, 1000));
+
+    // Détection ML (service detector, exposé à Prometheus)
+    const [anom, flag, trained, anomRange] = await Promise.all([
+      promInstant("anomaly_score"),
+      promInstant("anomaly_flag"),
+      promInstant("detector_trained"),
+      promRange("anomaly_score"),
+    ]);
+    setMl({ score: Math.round(scalar(anom) * 10) / 10, flag: scalar(flag) === 1, trained: scalar(trained) === 1 });
+    setAnomSeries(rangeToSeries(anomRange));
   }
 
   useEffect(() => {
@@ -123,14 +135,32 @@ export default function Cockpit() {
         <Chart title="Latence auth p95 (ms)" data={latSeries} color="#B8840F" unit="ms" />
       </div>
 
-      {/* Placeholders chaîne de résilience */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-        <div className="bg-white/70 border border-dashed border-lav rounded-2xl p-5 text-center text-ink/50">
-          🧠 Score d'anomalie ML — <b>Phase 4</b>
+      {/* Détection par IA (P4) */}
+      <h2 className="text-sm font-bold uppercase tracking-wide text-accent mb-2">Détection par intelligence artificielle</h2>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+        <div className={`rounded-2xl shadow p-5 text-center ${ml.flag ? "bg-red-50 border border-red-300" : "bg-white"}`}>
+          <div className="text-xs text-ink/50 font-semibold uppercase tracking-wide">Score d'anomalie (Isolation Forest)</div>
+          <div className={`text-5xl font-extrabold mt-2 ${ml.flag ? "text-red-600" : "text-green-600"}`}>
+            {ml.trained ? ml.score : "—"}
+          </div>
+          <div className="mt-2">
+            {!ml.trained ? (
+              <span className="text-sm text-ink/50">🧠 apprentissage de la normale…</span>
+            ) : ml.flag ? (
+              <span className="inline-block text-sm font-bold text-red-700 bg-red-100 px-3 py-1 rounded-full">⚠ ANOMALIE DÉTECTÉE</span>
+            ) : (
+              <span className="inline-block text-sm font-bold text-green-700 bg-green-100 px-3 py-1 rounded-full">✓ Comportement normal</span>
+            )}
+          </div>
         </div>
-        <div className="bg-white/70 border border-dashed border-lav rounded-2xl p-5 text-center text-ink/50">
-          🔁 Timeline de remédiation — <b>Phase 5</b>
+        <div className="lg:col-span-2">
+          <Chart title="Score d'anomalie (0–100)" data={anomSeries} color={ml.flag ? "#C2413C" : "#1E8E6A"} unit="" />
         </div>
+      </div>
+
+      {/* Placeholder remédiation (P5) */}
+      <div className="bg-white/70 border border-dashed border-lav rounded-2xl p-5 text-center text-ink/50 mb-6">
+        🔁 Timeline de remédiation automatique — <b>Phase 5</b>
       </div>
 
       {/* Outils avancés (repli, optionnel) */}

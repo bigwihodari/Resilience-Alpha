@@ -17,11 +17,10 @@ le **prouve** en rejouant une transaction.
 | `api` | API de paiement (transactions fictives) | FastAPI | ✅ P1 |
 | `frontend` | UI paiement + cockpit + console attaque | React + Tailwind (nginx) | ✅ P1 (paiement) |
 | `prometheus` / `grafana` / `loki` / `promtail` / `cadvisor` | observabilité (métriques, logs, CPU/mém) | Prometheus, Grafana, Loki | ✅ P2 |
-| `detector` | détection d'anomalie ML | Isolation Forest | ⏳ P4 |
+| `detector` | détection d'anomalie ML | Isolation Forest | ✅ P4 |
 | `traffic-gen` | trafic légitime randomisé (baseline ML) | Python | ✅ P3 |
 | `attacker` | **app attaquant tout-en-un** (console + KPIs) | FastAPI + Chart.js | ✅ P3 |
 | `orchestrator` | moteur de remédiation (zero-touch) | FastAPI + Ansible | ⏳ P5 |
-| `detector` | détection d'anomalie ML | Isolation Forest | ⏳ P4 |
 | `waf` | pare-feu applicatif | Traefik + Coraza | ⏳ P7 |
 | `assistant` | assistant RAG | Ollama + LangChain | ⏳ P8 |
 
