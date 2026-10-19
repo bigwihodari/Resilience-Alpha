@@ -42,6 +42,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-resilience}:${POSTGRES_PASSWORD:-resilience}@db:5432/${POSTGRES_DB:-resilience}
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-orchestrator-admin-token}
     depends_on:
       db:
         condition: service_healthy
@@ -157,6 +158,7 @@ services:
       DETECTOR_URL: http://detector:8000
       AUTH_URL: http://auth:8000
       API_URL: http://api:8000
+      PROM_URL: http://prometheus:9090
       ADMIN_TOKEN: ${ADMIN_TOKEN:-orchestrator-admin-token}
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-internal-trusted-token}
       CANARY_USER: ${DEMO_USER:-alice}

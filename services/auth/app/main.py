@@ -4,6 +4,7 @@ Gère les comptes utilisateurs fictifs et émet des JWT (HS256) signés avec un
 secret partagé avec l'API. Expose /metrics pour Prometheus.
 """
 import os
+import re
 import time
 import datetime as dt
 
@@ -11,6 +12,7 @@ import bcrypt
 import jwt
 from fastapi import FastAPI, HTTPException, Header, Body
 from pydantic import BaseModel
+from prometheus_client import Counter
 from sqlalchemy import create_engine, Integer, String, Numeric, ForeignKey, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, Session
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -45,6 +47,31 @@ def _allow_request() -> bool:
             _bucket["tokens"] -= 1
             return True
         return False
+
+
+# --- WAF applicatif : inspection des entrées (signatures type OWASP) ---
+WAF_BLOCKED = Counter("waf_blocked_total", "Requêtes bloquées par le WAF applicatif", ["rule"])
+WAF_PATTERNS = [
+    ("sqli_or_and", re.compile(r"(?i)('|%27)\s*(or|and)\s")),
+    ("sqli_union", re.compile(r"(?i)\bunion\b.*\bselect\b")),
+    ("sqli_tautology", re.compile(r"(?i)\bor\b\s+['\"]?\d+['\"]?\s*=\s*['\"]?\d+")),
+    ("sqli_drop", re.compile(r"(?i)\bdrop\b\s+\btable\b")),
+    ("sqli_insert", re.compile(r"(?i)\binsert\b\s+\binto\b")),
+    ("sql_comment", re.compile(r"(--|#|/\*)")),
+    ("xss_script", re.compile(r"(?i)<script")),
+]
+
+
+def waf_scan(source: str, **fields):
+    """Bloque (403) si une valeur correspond à une signature d'attaque."""
+    for name, value in fields.items():
+        if not isinstance(value, str):
+            continue
+        for rule, rx in WAF_PATTERNS:
+            if rx.search(value):
+                WAF_BLOCKED.labels(rule=rule).inc()
+                print(f"[WAF] BLOCK rule={rule} source={source} field={name} value={value!r}", flush=True)
+                raise HTTPException(403, "requête bloquée par le WAF")
 
 
 class Base(DeclarativeBase):
@@ -156,6 +183,8 @@ def admin_protect(body: dict = Body(...), x_admin_token: str = Header(default=No
 
 @app.post("/login")
 def login(c: Creds, x_internal_token: str = Header(default=None)):
+    # WAF : inspection des entrées avant tout traitement.
+    waf_scan("auth/login", username=c.username, password=c.password)
     # Les clients internes de confiance (canari, trafic légitime) ne sont jamais
     # délestés ; le trafic externe est limité quand le bouclier est actif.
     if x_internal_token != INTERNAL_TOKEN and not _allow_request():

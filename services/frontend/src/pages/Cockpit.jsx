@@ -210,6 +210,38 @@ export default function Cockpit() {
         );
       })()}
 
+      {/* Sécurité / SOC (P7) */}
+      <h2 className="text-sm font-bold uppercase tracking-wide text-accent mb-2">Sécurité — fonction SOC</h2>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+        <div className="bg-white rounded-2xl shadow p-4">
+          <div className="text-xs text-ink/50 font-semibold uppercase tracking-wide">Requêtes bloquées (WAF)</div>
+          <div className="text-3xl font-extrabold mt-1 text-ink">{rem?.waf_blocks ?? 0}</div>
+        </div>
+        <div className="bg-white rounded-2xl shadow p-4">
+          <div className="text-xs text-ink/50 font-semibold uppercase tracking-wide">État sécurité</div>
+          <div className="mt-2">
+            {rem?.security_state === "CONTAINED" ? (
+              <span className="inline-block text-sm font-bold text-amber-700 bg-amber-100 px-3 py-1 rounded-full">⚠ Injection contenue</span>
+            ) : (
+              <span className="inline-block text-sm font-bold text-green-700 bg-green-100 px-3 py-1 rounded-full">✓ Aucune menace active</span>
+            )}
+          </div>
+        </div>
+        <div className="bg-white rounded-2xl shadow p-4">
+          <div className="text-xs text-ink/50 font-semibold uppercase tracking-wide">Intégrité des données</div>
+          {rem?.last_integrity ? (
+            <div className="mt-1 text-sm">
+              <span className={rem.last_integrity.integrity_ok ? "text-green-700 font-bold" : "text-red-700 font-bold"}>
+                {rem.last_integrity.integrity_ok ? "✓ Intègre" : "✗ Altérée"}
+              </span>
+              <span className="text-ink/50"> · {rem.last_integrity.users_count} comptes</span>
+            </div>
+          ) : (
+            <div className="mt-1 text-sm text-ink/40">Pas encore contrôlée</div>
+          )}
+        </div>
+      </div>
+
       {/* Outils avancés (repli, optionnel) */}
       <details className="bg-white/60 rounded-xl p-3 text-sm">
         <summary className="cursor-pointer text-ink/60 font-semibold">Outils avancés (optionnel)</summary>

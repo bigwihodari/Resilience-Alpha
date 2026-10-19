@@ -22,6 +22,7 @@ from prometheus_client import Gauge, generate_latest, CONTENT_TYPE_LATEST
 DETECTOR = os.environ.get("DETECTOR_URL", "http://detector:8000")
 AUTH = os.environ.get("AUTH_URL", "http://auth:8000")
 API = os.environ.get("API_URL", "http://api:8000")
+PROM = os.environ.get("PROM_URL", "http://prometheus:9090")
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "orchestrator-admin-token")
 INTERNAL_TOKEN = os.environ.get("INTERNAL_TOKEN", "internal-trusted-token")
 CANARY_USER = os.environ.get("CANARY_USER", "alice")
@@ -30,9 +31,29 @@ POLL = float(os.environ.get("POLL", "3"))
 CONFIRM = int(os.environ.get("CONFIRM", "2"))   # polls anormaux consécutifs avant d'agir
 CLEAR = int(os.environ.get("CLEAR", "4"))        # polls normaux consécutifs avant de lever le bouclier
 
-state = {"state": "NORMAL", "protection": False, "score": 0.0, "last_canary": None, "timeline": []}
+state = {
+    "state": "NORMAL", "protection": False, "score": 0.0, "last_canary": None,
+    "security_state": "CLEAR", "waf_blocks": 0, "last_integrity": None, "timeline": [],
+}
 lock = threading.Lock()
 ACTIVEG = Gauge("remediation_active", "1 si bouclier de remediation actif")
+
+
+def prom(query):
+    try:
+        r = requests.get(f"{PROM}/api/v1/query", params={"query": query}, timeout=4)
+        res = r.json().get("data", {}).get("result", [])
+        return float(res[0]["value"][1]) if res else 0.0
+    except Exception:
+        return 0.0
+
+
+def integrity_check():
+    try:
+        r = requests.get(f"{API}/admin/integrity", headers={"X-Admin-Token": ADMIN_TOKEN}, timeout=6)
+        return r.json() if r.status_code == 200 else None
+    except Exception:
+        return None
 
 
 def now_iso():
@@ -94,6 +115,7 @@ def run_canary_record():
 def loop():
     anom_streak = 0
     clear_streak = 0
+    waf_clear = 0
     while True:
         is_anom, score, trained = detector_status()
         with lock:
@@ -132,6 +154,33 @@ def loop():
                 set_protection(False)
                 with lock:
                     state["state"] = "NORMAL"
+
+        # --- Playbook COMPROMISSION (injection SQL) : signal distinct du DoS ---
+        waf_rate = prom("sum(rate(waf_blocked_total[1m]))")
+        waf_total = prom("sum(waf_blocked_total)")
+        with lock:
+            state["waf_blocks"] = int(waf_total)
+            sec = state["security_state"]
+        waf_clear = 0 if waf_rate > 0.1 else waf_clear + 1
+
+        if sec == "CLEAR" and waf_rate > 0.3:
+            add_event("Tentative d'injection SQL : requêtes bloquées par le WAF", "alert")
+            add_event("Réponse compromission : contrôle d'intégrité des données…", "action")
+            res = integrity_check()
+            with lock:
+                state["last_integrity"] = res
+                state["security_state"] = "CONTAINED"
+            if res and res.get("integrity_ok"):
+                add_event(f"Intégrité vérifiée : {res['users_count']} comptes, soldes cohérents, "
+                          f"aucune donnée altérée", "success")
+            elif res:
+                add_event(f"ALERTE intégrité : {res.get('suspicious_users')} — restauration requise", "error")
+            else:
+                add_event("Contrôle d'intégrité indisponible", "error")
+        elif sec == "CONTAINED" and waf_clear >= CLEAR:
+            add_event("Fin des tentatives d'injection — menace contenue", "info")
+            with lock:
+                state["security_state"] = "CLEAR"
 
         time.sleep(POLL)
 

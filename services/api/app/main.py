@@ -5,6 +5,7 @@ Traite des transactions fictives. Vérifie les JWT émis par le service auth
 détection ML et la supervision).
 """
 import os
+import re
 import time
 import datetime as dt
 
@@ -16,10 +17,34 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, Session
 from prometheus_fastapi_instrumentator import Instrumentator
+from prometheus_client import Counter
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 JWT_SECRET = os.environ.get("JWT_SECRET", "dev-secret")
 JWT_ALG = "HS256"
+ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "orchestrator-admin-token")
+
+# --- WAF applicatif (signatures type OWASP) ---
+WAF_BLOCKED = Counter("waf_blocked_total", "Requêtes bloquées par le WAF applicatif", ["rule"])
+WAF_PATTERNS = [
+    ("sqli_or_and", re.compile(r"(?i)('|%27)\s*(or|and)\s")),
+    ("sqli_union", re.compile(r"(?i)\bunion\b.*\bselect\b")),
+    ("sqli_tautology", re.compile(r"(?i)\bor\b\s+['\"]?\d+['\"]?\s*=\s*['\"]?\d+")),
+    ("sqli_drop", re.compile(r"(?i)\bdrop\b\s+\btable\b")),
+    ("sql_comment", re.compile(r"(--|#|/\*)")),
+    ("xss_script", re.compile(r"(?i)<script")),
+]
+
+
+def waf_scan(source: str, **fields):
+    for name, value in fields.items():
+        if not isinstance(value, str):
+            continue
+        for rule, rx in WAF_PATTERNS:
+            if rx.search(value):
+                WAF_BLOCKED.labels(rule=rule).inc()
+                print(f"[WAF] BLOCK rule={rule} source={source} field={name} value={value!r}", flush=True)
+                raise HTTPException(403, "requête bloquée par le WAF")
 
 
 class Base(DeclarativeBase):
@@ -118,6 +143,7 @@ def my_account(user: str = Depends(current_user)):
 
 @app.post("/transactions")
 def create_transaction(body: TxIn, user: str = Depends(current_user)):
+    waf_scan("api/transactions", recipient=body.recipient or "")
     if body.amount <= 0:
         raise HTTPException(400, "amount must be positive")
     with Session(engine()) as s:
@@ -160,6 +186,34 @@ def list_transactions(user: str = Depends(current_user)):
             }
             for r in rows
         ]
+
+
+@app.get("/admin/integrity")
+def integrity(x_admin_token: str = Header(default=None)):
+    """Contrôle d'intégrité des données (réponse à une compromission).
+
+    Réponse différente de la restauration de disponibilité : on vérifie que la
+    base n'a pas été altérée (comptes attendus, pas d'utilisateur suspect,
+    soldes cohérents).
+    """
+    if x_admin_token != ADMIN_TOKEN:
+        raise HTTPException(403, "forbidden")
+    suspicious_rx = re.compile(r"(?i)('|--|;|union|drop|select|<script|=)")
+    with Session(engine()) as s:
+        users = s.scalars(select(User)).all()
+        accounts = s.scalars(select(Account)).all()
+        total = sum(float(a.balance) for a in accounts)
+        suspicious = [u.username for u in users if suspicious_rx.search(u.username)]
+        negative = [a.id for a in accounts if float(a.balance) < 0]
+    ok = not suspicious and not negative
+    return {
+        "integrity_ok": ok,
+        "users_count": len(users),
+        "accounts_count": len(accounts),
+        "total_balance": round(total, 2),
+        "suspicious_users": suspicious,
+        "negative_balances": negative,
+    }
 
 
 Instrumentator().instrument(app).expose(app)
