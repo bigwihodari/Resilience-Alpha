@@ -76,6 +76,16 @@ docker compose down          # garde les données
 docker compose down -v       # supprime aussi la base
 ```
 
+## Haute disponibilité (montage 5 PC)
+
+Topologie : **2 serveurs** (principal + secours), **2 clients**, **1 attaquant**.
+- L'**app client** (dossier [`client/`](client/README.md)) connecte les clients au serveur ;
+  ils se paient en direct (transfert + annuaire).
+- Le **backup** réplique le principal (comptes + clés d'idempotence) ; si le principal
+  tombe, **le client bascule tout seul** sur le backup et une **transaction en cours est
+  reprise sans double débit** (clé d'idempotence).
+- Détail et réglages : [`DEPLOIEMENT.md`](DEPLOIEMENT.md) §8 · recette : `scripts/recette-ha.sh`.
+
 ## Poste Attaquant (application séparée)
 
 L'attaque se lance depuis une **application unique** dédiée, dans `attacker/`

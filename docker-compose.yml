@@ -47,6 +47,9 @@ services:
       ADMIN_TOKEN: ${ADMIN_TOKEN:-orchestrator-admin-token}
       ROLE: ${ROLE:-primary}
       REPL_TOKEN: ${REPL_TOKEN:-repl-secret}
+      # Sur un host de SECOURS (ROLE=backup), URL de l'api du principal à répliquer,
+      # ex. http://192.168.137.1:8000 (vide = principal autonome).
+      PEER_API_URL: ${PEER_API_URL:-}
     depends_on:
       db:
         condition: service_healthy

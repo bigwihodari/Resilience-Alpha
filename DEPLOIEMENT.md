@@ -167,7 +167,50 @@ docker compose down                        # arrêter
 
 ---
 
-## 8. En cas de souci
+## 8. Montage haute disponibilité (5 PC)
+
+Topologie complète : 2 serveurs (principal + secours), 2 clients, 1 attaquant.
+
+| PC | Rôle | Lancement |
+|---|---|---|
+| **HOST-PRINCIPAL** (192.168.137.1) | Serveur actif + cockpit | `./start.ps1` (ROLE=primary par défaut) |
+| **HOST-BACKUP** (192.168.137.2) | Serveur de secours | compose complet avec `ROLE=backup` + `PEER_API_URL=http://192.168.137.1:8000` |
+| **CLIENT-A / CLIENT-B** | App client | `cd client` puis `./start.ps1` |
+| **ATTAQUANT** | Offensive | `cd attacker` puis `./start.ps1` |
+
+### Serveur de secours (HOST-BACKUP, 2e PC)
+Dans un `.env` à la racine du projet, régler puis lancer la stack complète :
+```
+ROLE=backup
+PEER_API_URL=http://192.168.137.1:8000
+JWT_SECRET=...        # IDENTIQUE au principal (tokens valides des deux côtés)
+REPL_TOKEN=...        # IDENTIQUE au principal
+```
+Le backup réplique en continu les comptes et les clés d'idempotence du principal.
+
+### Postes clients (`client/.env`)
+```
+HOST_PRIMARY=192.168.137.1    HOST_PRIMARY_API_PORT=8000   HOST_PRIMARY_AUTH_PORT=8001
+HOST_BACKUP=192.168.137.2     HOST_BACKUP_API_PORT=8000    HOST_BACKUP_AUTH_PORT=8001
+```
+Connexion : `alice` sur CLIENT-A, `bob` sur CLIENT-B (ils se paient en direct).
+
+### Comment ça bascule
+Chaque app client vise le principal ; s'il tombe, **nginx route automatiquement vers
+le backup** (qui a répliqué comptes + clés). Une transaction en cours est **reprise
+sans double débit** grâce à la clé d'idempotence. Le backup se **promeut** autoritaire
+après quelques secondes d'absence du principal.
+
+### Test local (une seule machine)
+```bash
+docker compose -f docker-compose.backup.yml up -d --build   # backup en 8010/8011
+cd client && cp .env.example .env && ./start.sh             # .env : backup 8010/8011
+./scripts/recette-ha.sh                                      # recette de bascule
+```
+
+---
+
+## 9. En cas de souci
 
 | Problème | Solution |
 |---|---|

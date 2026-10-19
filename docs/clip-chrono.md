@@ -29,6 +29,16 @@ Lisible à distance (titres/sous-titres conseillés).
 - Durée stricte : viser 55 s pour garder une marge.
 - Fichier de rendu : `Workshop2026-M2-G<n>-VidChrono.mp4`.
 
+## Variante haute disponibilité (démo bascule 5 PC)
+Montre, en plus, la continuité de service quand le serveur tombe :
+| Temps | À l'écran | Sous-titre |
+|---|---|---|
+| 0–10 s | CLIENT-A paie CLIENT-B (transfert en direct) | « Paiement entre clients via le serveur principal » |
+| 10–20 s | L'attaquant fait tomber le principal ; le client affiche « serveur indisponible — reprise » | « Le serveur principal tombe » |
+| 20–35 s | Le même paiement aboutit + un nouveau paiement passe | « Bascule automatique sur le backup, transaction reprise sans double débit » |
+| 35–45 s | Cockpit du backup : service actif | « Service maintenu, reprise autonome » |
+Script reproductible : `./scripts/recette-ha.sh`.
+
 ## Démonstration live (jury) — même logique en 3 min
 1. (30 s) État nominal + un paiement.
 2. (60 s) DoS depuis la console → détection ML → bouclier → canari OK.
