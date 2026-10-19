@@ -35,3 +35,7 @@ Thumbs.db
 # logs de build locaux
 build.log
 *.log
+
+# livrables : dépendances de génération
+livrables/node_modules/
+livrables/package*.json

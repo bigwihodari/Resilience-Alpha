@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Dossier — PROJECT RESILIENCE-ALPHA</title>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{ --ink:#261E48; --accent:#4B3FA6; --lav:#A1A6D4; --soft:#EEF0F8; --line:#D4D7EC;
+         --green:#1E8E6A; --red:#C2413C; --amber:#B8840F; }
+  @page { size: A4; margin: 16mm 15mm; }
+  *{ box-sizing:border-box; }
+  body{ font-family:"Montserrat",system-ui,Arial,sans-serif; color:var(--ink); font-size:11pt; line-height:1.5; margin:0; }
+  h1,h2,h3{ color:var(--ink); line-height:1.2; }
+  h2{ font-size:16pt; border-bottom:2px solid var(--accent); padding-bottom:4px; margin:0 0 10px; }
+  h3{ font-size:12.5pt; color:var(--accent); margin:14px 0 4px; }
+  p{ margin:6px 0; }
+  ul{ margin:6px 0; padding-left:20px; } li{ margin:3px 0; }
+  table{ width:100%; border-collapse:collapse; margin:8px 0; font-size:10pt; }
+  th,td{ border:1px solid var(--line); padding:5px 8px; text-align:left; vertical-align:top; }
+  th{ background:var(--ink); color:#fff; font-weight:600; }
+  tr:nth-child(even) td{ background:var(--soft); }
+  code{ background:var(--soft); padding:1px 4px; border-radius:3px; font-size:9.5pt; }
+  .section{ page-break-before: always; }
+  .tag{ display:inline-block; background:var(--soft); color:var(--accent); font-weight:600;
+         font-size:9pt; padding:2px 8px; border-radius:999px; margin-right:4px; }
+  .ok{ color:var(--green); font-weight:700; } .bad{ color:var(--red); font-weight:700; }
+  .kpi{ display:flex; gap:10px; flex-wrap:wrap; margin:8px 0; }
+  .kpi div{ flex:1; min-width:120px; background:var(--soft); border-radius:8px; padding:8px 10px; }
+  .kpi b{ display:block; font-size:15pt; color:var(--accent); }
+  .muted{ color:#6a6594; font-size:9.5pt; }
+
+  /* Cover */
+  .cover{ height:247mm; display:flex; flex-direction:column; justify-content:center; }
+  .cover .badge{ font-size:10pt; letter-spacing:.18em; text-transform:uppercase; color:var(--accent); font-weight:700; }
+  .cover h1{ font-size:30pt; font-weight:800; margin:8px 0; }
+  .cover .sub{ font-size:14pt; color:var(--lav); font-weight:600; }
+  .cover .box{ margin-top:24px; border-left:5px solid var(--accent); padding:10px 16px; background:var(--soft); }
+  .cover .foot{ margin-top:auto; color:#6a6594; font-size:10pt; }
+</style>
+</head>
+<body>
+
+<!-- COUVERTURE -->
+<section class="cover">
+  <div class="badge">Workshop EPSI Bac+5 · Dossier d'ingénierie & de gouvernance</div>
+  <h1>PROJECT RESILIENCE-ALPHA</h1>
+  <div class="sub">Cyber-résilience et reprise autonome d'une plateforme de paiement</div>
+  <div class="box">
+    <p><b>Démonstrateur :</b> un SI de paiement fictif conteneurisé qui subit une attaque
+    contrôlée, la détecte par machine learning et se rétablit <b>sans intervention humaine</b>,
+    avec preuve par transaction.</p>
+    <p class="muted">Dépôt : github.com/bigwihodari/Resilience-Alpha · Environnement et données
+    entièrement fictifs.</p>
+  </div>
+  <div class="foot">
+    Consortium : Workshop2026-M2-G&lt;n&gt; · Équipe : [À COMPLÉTER] · Octobre 2026
+  </div>
+</section>
+
+<!-- 1. RÉSUMÉ -->
+<section class="section">
+  <h2>1. Résumé exécutif</h2>
+  <p>Resilience-Alpha démontre une <b>chaîne de cyber-résilience de bout en bout</b> : une
+  plateforme de paiement fictive, une attaque réelle lancée depuis un poste distinct, une
+  détection par apprentissage automatique, une remédiation automatique et une vérification
+  du rétablissement par une nouvelle transaction réussie.</p>
+  <div class="kpi">
+    <div><b>~15 s</b>détection → reprise (RTO mesuré)</div>
+    <div><b>100 %</b>reprise sans intervention humaine</div>
+    <div><b>15/15</b>vérifications de recette au vert</div>
+    <div><b>5/5</b>piliers couverts</div>
+  </div>
+  <p>La solution couvre les cinq domaines exigés : développement (microservices de paiement),
+  infrastructure (conteneurisation + observabilité), IA/Data (détection ML + assistant RAG),
+  cybersécurité (attaque, WAF, SOC, secrets, durcissement) et gouvernance (EBIOS RM, PCA/PRA,
+  NIS2/DORA).</p>
+
+  <h3>Les deux incidents et leurs réponses (distinctes)</h3>
+  <table>
+    <tr><th>Incident</th><th>Atteinte</th><th>Réponse automatique</th><th>Preuve</th></tr>
+    <tr><td>Déni de service (DoS)</td><td>Disponibilité</td><td>Bouclier anti-DoS (load-shedding) + relâche auto</td><td>Transaction canari réussie</td></tr>
+    <tr><td>Injection SQL</td><td>Compromission</td><td>Blocage WAF + contrôle d'intégrité des données</td><td>Intégrité confirmée</td></tr>
+  </table>
+</section>
+
+<!-- 2. ARCHITECTURE -->
+<section class="section">
+  <h2>2. Architecture &amp; flux</h2>
+  <p>Deux postes sur le réseau Wi-Fi du groupe (<code>RESILIENCE-G&lt;n&gt;</code>, 192.168.137.x) :
+  le <b>PC Hôte</b> exécute la plateforme, le <b>PC Attaquant</b> lance les attaques depuis une
+  application dédiée.</p>
+  <h3>Composants (conteneurs Docker Compose)</h3>
+  <table>
+    <tr><th>Service</th><th>Rôle</th><th>Technologie</th></tr>
+    <tr><td>frontend</td><td>App unique de l'hôte : paiement + cockpit (reverse-proxy)</td><td>React + Tailwind, nginx</td></tr>
+    <tr><td>api</td><td>Transactions fictives, /metrics, WAF applicatif</td><td>FastAPI</td></tr>
+    <tr><td>auth</td><td>Authentification JWT, bouclier anti-DoS, WAF</td><td>FastAPI</td></tr>
+    <tr><td>db</td><td>Comptes &amp; transactions (non exposée)</td><td>PostgreSQL</td></tr>
+    <tr><td>detector</td><td>Détection d'anomalies ML (score)</td><td>scikit-learn</td></tr>
+    <tr><td>orchestrator</td><td>Moteur de remédiation (décide/agit/vérifie)</td><td>FastAPI</td></tr>
+    <tr><td>prometheus / grafana / loki / promtail / cadvisor</td><td>Observabilité (métriques, logs, CPU/mém)</td><td>Stack Grafana</td></tr>
+    <tr><td>traffic-gen</td><td>Trafic légitime (baseline du modèle)</td><td>Python</td></tr>
+    <tr><td>assistant</td><td>Assistant RAG opérateur (lecture doc, sans privilège)</td><td>Ollama + LangChain</td></tr>
+    <tr><td>attacker (poste distinct)</td><td>Console d'attaque tout-en-un (DoS, SQLi)</td><td>FastAPI + Chart.js</td></tr>
+  </table>
+  <h3>Flux de résilience</h3>
+  <p><code>trafic + attaque → métriques Prometheus + logs Loki → détecteur ML (score) →
+  orchestrateur (décision + action) → vérification canari → cockpit</code></p>
+</section>
+
+<!-- 3. DÉTECTION ML -->
+<section class="section">
+  <h2>3. Détection d'anomalies (machine learning)</h2>
+  <h3>Données &amp; préparation</h3>
+  <p>Le détecteur interroge Prometheus toutes les 5 s et construit un vecteur de features de
+  débit : requêtes totales/s, requêtes auth/s, taux d'erreurs 4xx/s, 5xx/s. Il apprend la
+  « vie normale » grâce au générateur de trafic légitime.</p>
+  <h3>Modèle</h3>
+  <p>Un <b>Isolation Forest</b> est entraîné sur la normale ; en complément, on apprend la
+  distribution normale (moyenne/écart-type) et on mesure l'écart courant par une <b>distance
+  standardisée</b> (Mahalanobis diagonale) avec un plancher de bruit adapté au débit. Le flag
+  d'anomalie est piloté par cette distance (fiable sur les gros écarts), l'Isolation Forest
+  servant de corroboration. Aucun seuil codé en dur sur les métriques brutes.</p>
+  <h3>Résultats mesurés</h3>
+  <table>
+    <tr><th>Situation</th><th>Débit auth</th><th>Latence p95 auth</th><th>Score d'anomalie</th></tr>
+    <tr><td>Normale</td><td>~1 req/s</td><td>~95 ms</td><td>~0</td></tr>
+    <tr><td>Sous DoS</td><td>~35 req/s</td><td>~490 ms</td><td>100 (anomalie)</td></tr>
+  </table>
+  <h3>Limites</h3>
+  <p>Détection sensible à la qualité de la baseline ; attaques « low-and-slow » moins visibles ;
+  modèle persisté mais à ré-entraîner si le profil de trafic change (endpoint <code>/retrain</code>).</p>
+</section>
+
+<!-- 4. REMÉDIATION -->
+<section class="section">
+  <h2>4. Remédiation autonome (zero-touch)</h2>
+  <p>L'orchestrateur surveille le détecteur. Sur anomalie confirmée, il <b>décide</b>, <b>agit</b>,
+  puis <b>vérifie</b> — sans intervention humaine.</p>
+  <h3>Playbook disponibilité (DoS)</h3>
+  <ul>
+    <li>Activation du <b>bouclier</b> sur l'auth : au-delà d'un débit, les requêtes externes
+    reçoivent un 429 immédiat (sans calcul bcrypt coûteux) → l'auth récupère.</li>
+    <li>Vérification par <b>transaction canari</b> (login + paiement) → service rétabli.</li>
+    <li>Relâche automatique du bouclier quand l'attaque cesse.</li>
+  </ul>
+  <h3>Playbook compromission (injection SQL)</h3>
+  <ul>
+    <li>Le WAF bloque la charge utile (403) ; l'orchestrateur lance un <b>contrôle d'intégrité</b>
+    des données (comptes attendus, pas d'utilisateur suspect, soldes cohérents).</li>
+    <li>Restauration depuis une sauvegarde saine en cas d'altération (RPO = dernier snapshot).</li>
+  </ul>
+  <h3>Accès maîtrisés</h3>
+  <p>L'orchestrateur n'a <b>pas</b> d'accès god-mode aux conteneurs : il agit via une API
+  d'administration <b>scoped</b> (activer le bouclier, contrôler l'intégrité), protégée par un
+  token dédié — un point d'attention explicite du cahier des charges.</p>
+</section>
+
+<!-- 5. SÉCURITÉ -->
+<section class="section">
+  <h2>5. Sécurité (défense)</h2>
+  <table>
+    <tr><th>Dispositif</th><th>Rôle</th></tr>
+    <tr><td>WAF applicatif (auth + api)</td><td>Inspection des entrées (signatures OWASP SQLi/XSS) → 403 + métrique + log</td></tr>
+    <tr><td>Fonction SOC</td><td>Loki + Prometheus + vue SOC du cockpit (blocages WAF, état, intégrité)</td></tr>
+    <tr><td>Moindre privilège</td><td>Orchestrateur via API admin scoped ; clients internes via token dédié</td></tr>
+    <tr><td>Durcissement</td><td><code>no-new-privileges</code> sur les services ; DB non exposée ; cAdvisor sans port</td></tr>
+    <tr><td>Secrets</td><td>Chiffrés via SOPS + age ; aucun secret en clair dans le dépôt</td></tr>
+  </table>
+  <p class="muted">Détail : voir <code>SECURITE.md</code> dans le dépôt.</p>
+</section>
+
+<!-- 6. ESSAIS -->
+<section class="section">
+  <h2>6. Résultats des essais</h2>
+  <p>Une recette automatisée (<code>scripts/recette.sh</code>) rejoue la chaîne complète et
+  produit un rapport. Dernier passage : <span class="ok">15 OK / 0 KO</span>.</p>
+  <table>
+    <tr><th>Vérification</th><th>Résultat</th></tr>
+    <tr><td>Santé des 7 services clés</td><td class="ok">OK</td></tr>
+    <tr><td>Modèle ML entraîné</td><td class="ok">OK</td></tr>
+    <tr><td>Transaction nominale</td><td class="ok">OK</td></tr>
+    <tr><td>DoS → reprise autonome (RECOVERED) + bouclier</td><td class="ok">OK</td></tr>
+    <tr><td>Transaction réussie pendant l'attaque</td><td class="ok">OK</td></tr>
+    <tr><td>Injection SQL → contenue par le WAF</td><td class="ok">OK</td></tr>
+    <tr><td>Contrôle d'intégrité des données</td><td class="ok">OK</td></tr>
+    <tr><td>Transaction finale après incidents</td><td class="ok">OK</td></tr>
+  </table>
+  <p>Chaos engineering (<code>scripts/chaos.sh</code>) : arrêt brutal d'un conteneur →
+  reprise automatique vérifiée par canari (politique de redémarrage).</p>
+</section>
+
+<!-- 7. GOUVERNANCE -->
+<section class="section">
+  <h2>7. Gouvernance &amp; conformité</h2>
+  <h3>Analyse de risques (EBIOS RM) — synthèse</h3>
+  <table>
+    <tr><th>Scénario</th><th>Gravité</th><th>Vraisemblance résiduelle</th><th>Niveau résiduel</th></tr>
+    <tr><td>DoS → indisponibilité</td><td>Critique</td><td>Faible (détecté + atténué auto)</td><td>Moyen</td></tr>
+    <tr><td>Injection → altération/fuite</td><td>Critique</td><td>Faible (bloqué WAF)</td><td>Faible-Moyen</td></tr>
+    <tr><td>Accès non autorisé</td><td>Grave</td><td>Faible</td><td>Faible</td></tr>
+  </table>
+  <h3>PCA / PRA</h3>
+  <p>Services vitaux : paiement et authentification. <b>RTO</b> visé &lt; 30 s (mesuré ~15 s) ;
+  <b>RPO</b> nul pour la disponibilité (base persistante), = dernier snapshot pour une
+  compromission. Deux playbooks distincts, responsabilités définies (automate / opérateur /
+  équipe).</p>
+  <h3>NIS2 / DORA</h3>
+  <p>Le prototype démontre : gestion des risques reliée à l'architecture, détection et réponse
+  aux incidents, continuité (reprise autonome), traçabilité. Non démontrables en 4 jours :
+  notification réglementaire, gouvernance organisationnelle, registre des tiers TIC, TLPT.</p>
+  <h3>Recommandations à la direction</h3>
+  <ul>
+    <li>Industrialiser la reprise (haute disponibilité + WAF réseau) : meilleur rapport valeur/effort.</li>
+    <li>Formaliser la notification d'incident à partir de la traçabilité existante.</li>
+    <li>Planifier des tests de résilience réguliers (le dispositif d'attaque contrôlée existe déjà).</li>
+    <li>Décider sur des éléments vérifiables : RTO, taux de blocage WAF, score d'anomalie, succès canari.</li>
+  </ul>
+  <p class="muted">Détail : <code>docs/gouvernance/</code> dans le dépôt.</p>
+</section>
+
+<!-- 8. CONTRIBUTIONS + LIMITES -->
+<section class="section">
+  <h2>8. Contributions, limites &amp; suites</h2>
+  <h3>Contribution de chacun</h3>
+  <table>
+    <tr><th>Membre</th><th>Domaine(s) assumé(s)</th><th>Contributions principales</th></tr>
+    <tr><td>[À COMPLÉTER]</td><td>Développement</td><td>API paiement, auth, frontend</td></tr>
+    <tr><td>[À COMPLÉTER]</td><td>Infrastructure</td><td>Compose, observabilité, déploiement</td></tr>
+    <tr><td>[À COMPLÉTER]</td><td>IA / Data</td><td>Détecteur ML, assistant RAG</td></tr>
+    <tr><td>[À COMPLÉTER]</td><td>Cybersécurité</td><td>Attaques, WAF, SOC, secrets</td></tr>
+    <tr><td>[À COMPLÉTER]</td><td>Gouvernance</td><td>EBIOS, PCA/PRA, NIS2/DORA</td></tr>
+  </table>
+  <h3>Limites assumées</h3>
+  <ul>
+    <li>Prototype mono-hôte : pas de haute disponibilité ni de reprise multi-site.</li>
+    <li>WAF à signatures : contournement possible par obfuscation (vs WAF réseau avec CRS).</li>
+    <li>Bouclier DoS applicatif : protège l'application, pas une saturation réseau amont.</li>
+  </ul>
+  <h3>Ce que nous ferions différemment en contexte industriel</h3>
+  <ul>
+    <li>WAF réseau (ModSecurity/Coraza) + blocage par IP/réputation.</li>
+    <li>Haute disponibilité (réplication DB, plusieurs nœuds) et sauvegardes testées.</li>
+    <li>Enrichissement du modèle (plus de features, ré-entraînement périodique).</li>
+  </ul>
+  <p class="muted">Code, configurations, scripts d'attaque et de ML, tests et README :
+  dépôt Git du projet (github.com/bigwihodari/Resilience-Alpha).</p>
+</section>
+
+</body>
+</html>
