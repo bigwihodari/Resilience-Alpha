@@ -24,7 +24,7 @@ le **prouve** en rejouant une transaction.
 | WAF applicatif | filtrage des entrées (SQLi/XSS) dans `auth`+`api` | signatures OWASP | ✅ P7 |
 | SIEM / SOC | fonction SOC intégrée (Loki + Prometheus + cockpit) | — | ✅ P7 |
 | Secrets | gestion chiffrée | SOPS + age | ✅ P7 (workflow) |
-| `assistant` | assistant RAG | Ollama + LangChain | ⏳ P8 |
+| `assistant` | assistant RAG opérateur (lecture doc) | Ollama (qwen3:8b) + LangChain + FAISS | ✅ P8 |
 
 > 📖 **Nouvelle machine / équipe ?** Guide pas-à-pas détaillé dans
 > [`DEPLOIEMENT.md`](DEPLOIEMENT.md).

@@ -48,6 +48,17 @@ export async function promRange(query, minutes = 15, step = 15) {
     return j?.data?.result ?? [];
   } catch { return []; }
 }
+// Assistant RAG (via proxy nginx /assistant).
+export async function askAssistant(question) {
+  const r = await fetch("/assistant/ask", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question }),
+  });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
 // État + timeline du moteur de remédiation (via proxy nginx /orch).
 export async function orchStatus() {
   try {

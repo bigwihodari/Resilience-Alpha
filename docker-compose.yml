@@ -176,6 +176,25 @@ services:
     networks: [backend]
     restart: unless-stopped
 
+  assistant:
+    build: ./services/assistant
+    container_name: ra-assistant
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      LLM_MODEL: ${LLM_MODEL:-qwen3:8b}
+      EMB_MODEL: ${EMB_MODEL:-nomic-embed-text}
+      KNOWLEDGE_DIR: /app/knowledge
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./docs:/app/knowledge/docs:ro
+      - ./README.md:/app/knowledge/README.md:ro
+      - ./SECURITE.md:/app/knowledge/SECURITE.md:ro
+      - ./DEPLOIEMENT.md:/app/knowledge/DEPLOIEMENT.md:ro
+    networks: [backend]
+    restart: unless-stopped
+
   grafana:
     image: grafana/grafana:11.3.1
     container_name: ra-grafana
