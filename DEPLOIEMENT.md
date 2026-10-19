@@ -90,7 +90,7 @@ Tu dois voir la page de connexion, pouvoir te connecter et faire un paiement tes
 
 > ℹ️ **Modèle à deux applications** : le **poste Hôte** fait tourner la plateforme
 > (ci-dessus). Le **poste Attaquant** lance les attaques depuis sa **propre
-> application unique** (console + indicateurs), décrite dans son dossier `attacker/`.
+> application unique** (console + indicateurs) — voir **section 7**.
 
 ---
 
@@ -113,7 +113,61 @@ docker compose down -v   # arrête ET efface la base de données
 
 ---
 
-## 7. En cas de souci
+## 7. Poste ATTAQUANT — son application (PC distinct)
+
+L'attaque se lance depuis une **application unique dédiée**, à exécuter sur un
+**second ordinateur** (le PC Attaquant), distinct du PC Hôte. Même dépôt, dossier
+`attacker/`.
+
+### a. Récupérer le projet (sur le PC Attaquant)
+
+```bash
+git clone https://github.com/bigwihodari/Resilience-Alpha.git
+cd Resilience-Alpha/attacker
+```
+
+### b. Indiquer la cible (le PC Hôte)
+
+```bash
+cp .env.example .env     # (PowerShell : copy .env.example .env)
+```
+
+Puis éditer `.env` :
+
+| Variable | Test local (même PC) | En labo (PC Hôte distant) |
+|---|---|---|
+| `TARGET_URL` | `http://host.docker.internal:8080` | `http://192.168.137.1:8080` |
+| `TARGET_HOST` | `localhost` | `192.168.137.1` |
+
+> `192.168.137.1` = l'adresse du PC Hôte sur le point d'accès Wi-Fi `RESILIENCE-G<n>`.
+
+### c. Lancer
+
+- **Windows** : `.\start.ps1`
+- **Git Bash / Linux / Mac** : `./start.sh`
+
+### d. Utiliser
+
+La **console attaquant** (tout-en-un) : **http://localhost:8090**
+
+On y trouve, sans rien chercher ailleurs :
+- le lancement des attaques (**Saturation / DoS** et **Injection SQL**), avec intensité et durée ;
+- les **indicateurs côté attaquant** en direct : requêtes envoyées/s, total, erreurs reçues, latence de la cible, graphe temps réel ;
+- des **liens vers la supervision de la cible** (cockpit, app paiement, Grafana).
+
+### e. Mettre à jour / arrêter
+
+```bash
+git pull && docker compose up -d --build   # mise à jour
+docker compose down                        # arrêter
+```
+
+> ⚠️ Les attaques sont **strictement limitées** à la cible configurée et au labo
+> de l'équipe. Jamais vers le réseau du campus, un autre groupe ou Internet.
+
+---
+
+## 8. En cas de souci
 
 | Problème | Solution |
 |---|---|
