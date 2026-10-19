@@ -16,7 +16,7 @@ cp .env.example .env     # puis adapter TARGET_URL / TARGET_HOST
 
 Console : http://localhost:8090
 
-Mettre à jour : `.\update.ps1` (ou `./update.sh`). Arrêter : `docker compose down`.
+Mettre à jour : `.\update.ps1` (ou `./update.sh`). Arrêter : `.\stop.ps1` (ou `./stop.sh`).
 
 ## Configurer la cible (`.env`)
 

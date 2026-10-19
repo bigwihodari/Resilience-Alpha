@@ -106,10 +106,11 @@ curl http://localhost:8001/health
 
 ## 6. Arrêter
 
-```bash
-docker compose down      # arrête tout (garde les données)
-docker compose down -v   # arrête ET efface la base de données
-```
+- **Tout arrêter** (host principal/secours + client + attaquant), en une commande :
+  `.\stop.ps1` (ou `./stop.sh`) — les données sont conservées.
+- Arrêter une seule version : depuis son dossier, `docker compose down`
+  (ou `client\stop.ps1`, `attacker\stop.ps1`).
+- Effacer aussi les données d'une stack : `docker compose down -v`.
 
 ---
 

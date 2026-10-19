@@ -72,8 +72,9 @@ curl -s localhost:8000/transactions -H "Authorization: Bearer $TOKEN"
 ## Arrêter
 
 ```bash
-docker compose down          # garde les données
-docker compose down -v       # supprime aussi la base
+./stop.sh                    # arrête TOUT (host + backup + client + attaquant) — ou .\stop.ps1
+docker compose down          # arrête seulement ce dossier (garde les données)
+docker compose down -v       # arrête ET supprime les données de cette stack
 ```
 
 ## Haute disponibilité (montage 5 PC)

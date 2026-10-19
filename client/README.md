@@ -11,7 +11,7 @@ cp .env.example .env     # régler HOST_PRIMARY (adresse du serveur HOST)
 ```
 App : http://localhost:8095 — connexion `alice` ou `bob` / `password123`.
 
-Mettre à jour : `.\update.ps1` (ou `./update.sh`). Arrêter : `docker compose down`.
+Mettre à jour : `.\update.ps1` (ou `./update.sh`). Arrêter : `.\stop.ps1` (ou `./stop.sh`).
 
 ## Configurer le serveur (`.env`)
 | Variable | Local | Labo |
