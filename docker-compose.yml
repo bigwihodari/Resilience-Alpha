@@ -1,0 +1,69 @@
+name: resilience-alpha
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: ra-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-resilience}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-resilience}
+      POSTGRES_DB: ${POSTGRES_DB:-resilience}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-resilience}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    networks: [backend]
+    # DB volontairement NON exposée au réseau pédagogique (règle du sujet).
+
+  auth:
+    build: ./services/auth
+    container_name: ra-auth
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-resilience}:${POSTGRES_PASSWORD:-resilience}@db:5432/${POSTGRES_DB:-resilience}
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-password123}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8001:8000"
+    networks: [backend]
+    restart: unless-stopped
+
+  api:
+    build: ./services/api
+    container_name: ra-api
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-resilience}:${POSTGRES_PASSWORD:-resilience}@db:5432/${POSTGRES_DB:-resilience}
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+    depends_on:
+      db:
+        condition: service_healthy
+      auth:
+        condition: service_started
+    ports:
+      - "8000:8000"
+    networks: [backend]
+    restart: unless-stopped
+
+  frontend:
+    build: ./services/frontend
+    container_name: ra-frontend
+    depends_on:
+      - api
+      - auth
+    ports:
+      - "8080:80"
+    networks: [backend]
+    restart: unless-stopped
+
+volumes:
+  db_data:
+
+networks:
+  backend:
+    driver: bridge
