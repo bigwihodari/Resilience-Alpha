@@ -110,25 +110,31 @@ export default function Banker() {
 
   return (
     <div className="max-w-6xl mx-auto p-5">
-      {/* En-tête + KPI */}
-      <div className="flex items-center gap-3 mb-5">
-        <h1 className="text-2xl font-extrabold text-ink">Interface banquier</h1>
-        <span className={`text-xs px-2 py-0.5 rounded-full ${live ? "bg-green-100 text-green-700" : "bg-gray-200 text-gray-500"}`}>
-          {live ? "● temps réel" : "○ hors ligne"}
-        </span>
-      </div>
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-6">
-        <div className="bg-gradient-to-br from-ink to-accent text-white rounded-2xl p-5 shadow">
-          <div className="text-sm opacity-80">Masse monétaire</div>
-          <div className="text-3xl font-extrabold mt-1">{euro(data.total_balance)}</div>
+      {/* Hero */}
+      <div className="bg-gradient-to-br from-ink via-accent to-[#6C5CE7] text-white rounded-3xl p-6 shadow-xl mb-5">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <div className="text-[11px] tracking-widest font-bold opacity-80">RESILIENCE-ALPHA · BANQUE</div>
+            <h1 className="text-3xl font-black mt-1">Interface banquier</h1>
+            <p className="text-sm opacity-85 mt-1">Gère les comptes clients, règle le livret d'épargne, crédite et débite en direct.</p>
+          </div>
+          <span className={`inline-flex items-center gap-2 text-sm px-3 py-1.5 rounded-full ${live ? "bg-white/15" : "bg-white/10 opacity-70"}`}>
+            <span className={`w-2.5 h-2.5 rounded-full ${live ? "bg-green-400 animate-pulse" : "bg-white/40"}`}></span> {live ? "Temps réel" : "Hors ligne"}
+          </span>
         </div>
-        <div className="bg-white rounded-2xl p-5 shadow">
-          <div className="text-sm text-ink/60">Comptes clients</div>
-          <div className="text-3xl font-extrabold text-ink mt-1">{data.count}</div>
-        </div>
-        <div className="bg-white rounded-2xl p-5 shadow hidden sm:block">
-          <div className="text-sm text-ink/60">Compte sélectionné</div>
-          <div className="text-2xl font-bold text-accent mt-1 truncate">{selected || "—"}</div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-4">
+          <div className="bg-white/10 rounded-2xl p-4">
+            <div className="text-xs opacity-80">Masse monétaire</div>
+            <div className="text-2xl font-extrabold mt-0.5">{euro(data.total_balance)}</div>
+          </div>
+          <div className="bg-white/10 rounded-2xl p-4">
+            <div className="text-xs opacity-80">Comptes clients</div>
+            <div className="text-2xl font-extrabold mt-0.5">{data.count}</div>
+          </div>
+          <div className="bg-white/10 rounded-2xl p-4 hidden sm:block">
+            <div className="text-xs opacity-80">Compte sélectionné</div>
+            <div className="text-xl font-bold mt-0.5 truncate">{selected || "—"}</div>
+          </div>
         </div>
       </div>
 
