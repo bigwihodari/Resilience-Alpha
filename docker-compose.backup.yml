@@ -50,7 +50,10 @@ services:
       ADMIN_TOKEN: ${ADMIN_TOKEN:-orchestrator-admin-token}
       ROLE: backup
       HA_NAME: SECOURS
-      PEER_API_URL: ${PEER_API_URL:-http://host.docker.internal:8000}
+      # Pair du SECOURS = le PRINCIPAL. Variable DEDIEE (BACKUP_PEER_API_URL) pour ne
+      # pas entrer en conflit avec PEER_API_URL du principal qui, en test local sur
+      # une seule machine, partage le meme fichier .env et pointe vers le secours.
+      PEER_API_URL: ${BACKUP_PEER_API_URL:-http://host.docker.internal:8000}
       REPL_TOKEN: ${REPL_TOKEN:-repl-secret}
       REPL_INTERVAL: "2"
     extra_hosts:
