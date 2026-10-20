@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
   getUser, clearSession,
   getNetworth, getLeaderboard,
-  getLivrets, createLivret, livretDeposit, livretWithdraw, livretUpgrade,
+  getLivrets, createLivret, livretDeposit, livretWithdraw, livretUpgrade, savingsUpgrade,
   savingsDeposit, savingsWithdraw,
   getShop, shopBuy,
   getMail, markMailRead, getAuctions, bidAuction, getQuizzes, answerQuiz,
@@ -143,13 +143,14 @@ export default function Dashboard() {
           <div className="space-y-3">
             <div className="bg-white rounded-2xl shadow p-4">
               <div className="flex items-center justify-between">
-                <div className="font-bold text-ink">Livret principal</div>
+                <div className="font-bold text-ink">Livret principal <span className="text-xs text-ink/40">niv {liv.principal.level || 0}</span></div>
                 <div className="text-xs text-green-600 font-semibold">+{((liv.principal.rate || 0) * 100).toFixed(2)} % / {liv.interval}s</div>
               </div>
               <div className="text-3xl font-extrabold text-green-700 mt-1">{euro(liv.principal.balance)}</div>
-              <div className="flex gap-2 mt-2">
+              <div className="flex flex-wrap gap-2 mt-2">
                 <button onClick={() => act(() => savingsDeposit(100), "Dépôt de 100 €")} className="text-xs bg-green-600 text-white font-semibold px-3 py-1.5 rounded-lg hover:bg-green-700">Déposer 100</button>
                 <button onClick={() => act(() => savingsWithdraw(100), "Retrait de 100 €")} className="text-xs bg-ink text-white font-semibold px-3 py-1.5 rounded-lg hover:bg-accent">Retirer 100</button>
+                <button onClick={() => act(() => savingsUpgrade(), (r) => `Taux boosté à +${(r.rate * 100).toFixed(2)} %`)} className="text-xs bg-accent text-white font-semibold px-3 py-1.5 rounded-lg hover:bg-ink">⬆ Booster ({euro(liv.principal.upgrade_cost || 0)})</button>
               </div>
             </div>
             {liv.livrets.map((lv) => (

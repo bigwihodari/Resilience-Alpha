@@ -67,8 +67,9 @@ SHOP = {
     "security":    {"label": "Coffre-fort", "base": 800.0, "growth": 1.45,
                     "desc": "Sécurité : réduit le risque de te faire voler par un attaquant (par niveau)."},
 }
-LIVRET_RATE_BASE = 200.0      # coût de base pour booster le taux d'un livret
-LIVRET_RATE_GROWTH = 1.18
+LIVRET_RATE_BASE = 200.0      # coût de base pour booster le taux d'un livret (principal, position 0)
+LIVRET_RATE_GROWTH = 1.18     # exponentiel sur le NIVEAU de boost
+LIVRET_NUMBER_GROWTH = float(os.environ.get("LIVRET_NUMBER_GROWTH", "5"))  # exponentiel sur le NUMERO du livret
 LIVRET_RATE_STEP = 0.005      # +0.5 % de taux par niveau de boost
 BASE_LIVRET_SLOTS = 1         # livrets supplémentaires autorisés au départ (hors principal)
 
@@ -93,6 +94,19 @@ def _hk_level(ukey: str) -> int:
 
 def upg_cost(base, growth, level):
     return round(float(base) * (float(growth) ** int(level)), 2)
+
+
+def _boost_cost(position, level):
+    """Coût du prochain boost d'un livret.
+
+    Exponentiel sur DEUX axes :
+    - le NIVEAU de boost déjà atteint (growth ^ level) ;
+    - le NUMÉRO du livret (position) : principal=0, livrets suivants 1,2,3…
+      → base x (LIVRET_NUMBER_GROWTH ^ position). Plus on possède de livrets,
+      plus booster un nouveau livret coûte cher dès le niveau 1.
+    """
+    base = LIVRET_RATE_BASE * (LIVRET_NUMBER_GROWTH ** int(position))
+    return upg_cost(base, LIVRET_RATE_GROWTH, level)
 
 
 def _upg_level(s, user_id, ukey):
@@ -913,12 +927,18 @@ def list_livrets(user: str = Depends(current_user)):
         u = _user_or_404(s, user)
         acc = s.scalar(select(Account).where(Account.user_id == u.id))
         extras = s.scalars(select(Livret).where(Livret.user_id == u.id).order_by(Livret.id)).all()
+        p_level = _upg_level(s, u.id, "principal_rate")
         return {
-            "principal": {"balance": float(acc.savings), "rate": savings_cfg["rate"]},
+            "principal": {"balance": float(acc.savings),
+                          "rate": round(savings_cfg["rate"] + LIVRET_RATE_STEP * p_level, 4),
+                          "level": p_level,
+                          "upgrade_cost": _boost_cost(0, p_level),
+                          "rate_step": LIVRET_RATE_STEP},
+            # position = index+1 (le principal occupe la position 0)
             "livrets": [{"id": lv.id, "name": lv.name, "balance": float(lv.balance),
                          "rate": float(lv.rate), "level": lv.level,
-                         "upgrade_cost": upg_cost(LIVRET_RATE_BASE, LIVRET_RATE_GROWTH, lv.level),
-                         "rate_step": LIVRET_RATE_STEP} for lv in extras],
+                         "upgrade_cost": _boost_cost(idx + 1, lv.level),
+                         "rate_step": LIVRET_RATE_STEP} for idx, lv in enumerate(extras)],
             "interval": savings_cfg["interval"],
         }
 
@@ -1059,7 +1079,10 @@ def livret_upgrade(livret_id: int, user: str = Depends(current_user)):
                                            Livret.user_id == u.id).with_for_update())
         if acc is None or lv is None:
             raise HTTPException(404, "livret introuvable")
-        cost = upg_cost(LIVRET_RATE_BASE, LIVRET_RATE_GROWTH, lv.level)
+        # position du livret (principal=0, extras 1,2,3… par ordre d'id)
+        ids = s.scalars(select(Livret.id).where(Livret.user_id == u.id).order_by(Livret.id)).all()
+        position = ids.index(livret_id) + 1
+        cost = _boost_cost(position, lv.level)
         if float(acc.balance) < cost:
             raise HTTPException(402, f"solde insuffisant (coût {cost} €)")
         acc.balance = float(acc.balance) - cost
@@ -1067,7 +1090,40 @@ def livret_upgrade(livret_id: int, user: str = Depends(current_user)):
         lv.level = int(lv.level) + 1
         s.commit()
         out = {"id": lv.id, "level": lv.level, "rate": float(lv.rate), "paid": cost,
-               "next_cost": upg_cost(LIVRET_RATE_BASE, LIVRET_RATE_GROWTH, lv.level),
+               "next_cost": _boost_cost(position, lv.level),
+               "balance": float(acc.balance)}
+    ws_manager.publish({"type": "tx", "from": user, "to": "SHOP", "amount": cost, "op": "upgrade"})
+    return out
+
+
+@app.post("/savings/upgrade")
+def savings_upgrade(user: str = Depends(current_user)):
+    """Booste le taux du LIVRET PRINCIPAL (+LIVRET_RATE_STEP), position 0.
+
+    Le bonus est stocké dans l'upgrade 'principal_rate' et appliqué dans la
+    boucle de production : taux effectif = savings_cfg['rate'] + step * niveau."""
+    with Session(engine()) as s:
+        u = _user_or_404(s, user)
+        acc = s.scalar(select(Account).where(Account.user_id == u.id).with_for_update())
+        if acc is None:
+            raise HTTPException(404, "compte introuvable")
+        upg = s.scalar(select(Upgrade).where(Upgrade.user_id == u.id,
+                                             Upgrade.ukey == "principal_rate").with_for_update())
+        level = int(upg.level) if upg else 0
+        cost = _boost_cost(0, level)
+        if float(acc.balance) < cost:
+            raise HTTPException(402, f"solde insuffisant (coût {cost} €)")
+        acc.balance = float(acc.balance) - cost
+        if upg is None:
+            upg = Upgrade(user_id=u.id, ukey="principal_rate", level=1)
+            s.add(upg)
+        else:
+            upg.level = level + 1
+        s.commit()
+        new_level = int(upg.level)
+        out = {"level": new_level,
+               "rate": round(savings_cfg["rate"] + LIVRET_RATE_STEP * new_level, 4),
+               "paid": cost, "next_cost": _boost_cost(0, new_level),
                "balance": float(acc.balance)}
     ws_manager.publish({"type": "tx", "from": user, "to": "SHOP", "amount": cost, "op": "upgrade"})
     return out
@@ -1126,12 +1182,17 @@ def savings_interest_loop():
                 # Multiplicateur de production par utilisateur (upgrade 'global_mult').
                 mults = {uid: _global_mult(lvl) for uid, lvl in s.execute(
                     select(Upgrade.user_id, Upgrade.level).where(Upgrade.ukey == "global_mult")).all()}
-                if rate > 0:
-                    for a in s.scalars(select(Account).where(Account.savings > 0)).all():
-                        interest = round(float(a.savings) * rate * mults.get(a.user_id, 1.0), 2)
-                        if interest > 0:
-                            a.savings = float(a.savings) + interest
-                            touched = True
+                # Boost du livret principal par utilisateur (upgrade 'principal_rate').
+                p_levels = {uid: lvl for uid, lvl in s.execute(
+                    select(Upgrade.user_id, Upgrade.level).where(Upgrade.ukey == "principal_rate")).all()}
+                for a in s.scalars(select(Account).where(Account.savings > 0)).all():
+                    eff_rate = rate + LIVRET_RATE_STEP * int(p_levels.get(a.user_id, 0))
+                    if eff_rate <= 0:
+                        continue
+                    interest = round(float(a.savings) * eff_rate * mults.get(a.user_id, 1.0), 2)
+                    if interest > 0:
+                        a.savings = float(a.savings) + interest
+                        touched = True
                 for lv in s.scalars(select(Livret).where(Livret.balance > 0, Livret.rate > 0)).all():
                     interest = round(float(lv.balance) * float(lv.rate) * mults.get(lv.user_id, 1.0), 2)
                     if interest > 0:

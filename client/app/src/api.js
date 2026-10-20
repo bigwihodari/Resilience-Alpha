@@ -63,6 +63,7 @@ export const createLivret = (name) => jpost("/api/livrets", { name }, authH());
 export const livretDeposit = (id, amount) => jpost(`/api/livrets/${id}/deposit`, { amount }, authH());
 export const livretWithdraw = (id, amount) => jpost(`/api/livrets/${id}/withdraw`, { amount }, authH());
 export const livretUpgrade = (id) => jpost(`/api/livrets/${id}/upgrade`, {}, authH());
+export const savingsUpgrade = () => jpost("/api/savings/upgrade", {}, authH());
 // Shop
 export const getShop = () => jget("/api/shop", { items: [] });
 export const shopBuy = (ukey) => jpost("/api/shop/buy", { ukey }, authH());
