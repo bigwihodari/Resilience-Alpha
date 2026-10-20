@@ -35,18 +35,21 @@ export default function Pay() {
   useEffect(() => {
     refresh();
     // Temps réel : à chaque transaction poussée par le serveur, on rafraîchit (sans refresh manuel).
-    let ws, stopped = false, retry;
+    let ws, stopped = false, retry, ping;
     const connect = () => {
       try {
         const proto = location.protocol === "https:" ? "wss" : "ws";
         ws = new WebSocket(`${proto}://${location.host}/ws`);
+        // Ping régulier : garde la socket vivante à travers un NAT/WSL qui coupe
+        // les connexions longues inactives (sinon les mises à jour live s'arrêtent).
+        ws.onopen = () => { clearInterval(ping); ping = setInterval(() => { try { ws.send("ping"); } catch { /* */ } }, 25000); };
         ws.onmessage = (e) => { try { if (JSON.parse(e.data).type === "tx") refresh(); } catch { /* */ } };
-        ws.onclose = () => { if (!stopped) retry = setTimeout(connect, 2000); }; // reconnexion (ex. bascule)
+        ws.onclose = () => { clearInterval(ping); if (!stopped) retry = setTimeout(connect, 2000); }; // reconnexion (ex. bascule)
         ws.onerror = () => { try { ws.close(); } catch { /* */ } };
       } catch { retry = setTimeout(connect, 2000); }
     };
     connect();
-    return () => { stopped = true; clearTimeout(retry); try { ws && ws.close(); } catch { /* */ } };
+    return () => { stopped = true; clearTimeout(retry); clearInterval(ping); try { ws && ws.close(); } catch { /* */ } };
   }, []);
 
   async function doSearch(v) {
