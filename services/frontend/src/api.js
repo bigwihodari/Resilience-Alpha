@@ -84,6 +84,11 @@ export async function askAssistant(question) {
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }
+// Événements serveur live (logs ingérés par le RAG) — pour le panneau de l'assistant.
+export async function assistantEvents() {
+  try { const r = await fetch("/assistant/events", { cache: "no-store" }); if (!r.ok) return []; const j = await r.json(); return (j.events || "").split("\n").filter(Boolean); }
+  catch { return []; }
+}
 
 // État + timeline du moteur de remédiation (via proxy nginx /orch).
 export async function orchStatus() {

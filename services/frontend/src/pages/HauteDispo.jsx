@@ -99,11 +99,23 @@ export default function HauteDispo() {
 
   return (
     <div className="max-w-5xl mx-auto p-5">
-      <div className="flex items-center gap-3 mb-5">
-        <h1 className="text-2xl font-extrabold text-ink">Haute disponibilité</h1>
-        <span className="ml-auto inline-flex items-center gap-2 text-sm bg-white px-3 py-1.5 rounded-full shadow">
-          <span className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse"></span> Suivi live
-        </span>
+      {/* Hero */}
+      <div className="bg-gradient-to-br from-ink via-accent to-[#6C5CE7] text-white rounded-3xl p-6 shadow-xl mb-6">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <div className="text-[11px] tracking-widest font-bold opacity-80">RESILIENCE-ALPHA · HAUTE DISPO</div>
+            <h1 className="text-3xl font-black mt-1">Haute disponibilité</h1>
+            <p className="text-sm opacity-85 mt-1 max-w-2xl">Cluster principal / secours : réplication live, bascule automatique et retour auto quand le principal se répare.</p>
+          </div>
+          <span className="inline-flex items-center gap-2 text-sm bg-white/15 px-3 py-1.5 rounded-full">
+            <span className="w-2.5 h-2.5 rounded-full bg-green-400 animate-pulse"></span> Suivi live
+          </span>
+        </div>
+        <div className="flex gap-2 mt-4 flex-wrap">
+          <span className={`text-xs font-semibold px-3 py-1 rounded-full ${servingBackup ? "bg-amber-500/40" : "bg-white/15"}`}>{serving ? (servingBackup ? `⚠ Trafic servi par le SECOURS (${serving})` : `✓ Trafic servi par le PRINCIPAL (${serving})`) : "Recherche du cluster…"}</span>
+          <span className={`text-xs font-semibold px-3 py-1 rounded-full ${ia.flag ? "bg-red-500/40" : "bg-white/15"}`}>{ia.flag ? "⚠ Anomalie IA" : ia.trained ? "✓ IA : normal" : "🧠 IA en apprentissage"}</span>
+          {rem?.protection && <span className="text-xs font-semibold px-3 py-1 rounded-full bg-white/15">🛡️ Bouclier actif</span>}
+        </div>
       </div>
 
       {/* Bannière compromission (jeu de hacker) : bascule secours pour protéger l'argent */}
