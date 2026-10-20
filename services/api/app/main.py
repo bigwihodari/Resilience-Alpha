@@ -2114,11 +2114,20 @@ def answer_quiz(quiz_id: int, body: AnswerIn, user: str = Depends(current_user))
 
 @app.get("/bank/quizzes")
 def bank_list_quizzes(banker: str = Depends(require_banker)):
-    """Vue banquier : quiz avec la réponse."""
+    """Vue banquier : quiz avec la réponse + timer restant."""
+    now = dt.datetime.now(dt.timezone.utc)
     with Session(engine()) as s:
         rows = s.scalars(select(Quiz).order_by(Quiz.id.desc()).limit(20)).all()
-    return {"quizzes": [{"id": q.id, "question": q.question, "answer": q.answer,
-                         "prize": float(q.prize), "status": q.status, "winner": q.winner} for q in rows]}
+        out = []
+        for q in rows:
+            secs = None
+            if q.ends_at is not None:
+                ends = q.ends_at if q.ends_at.tzinfo else q.ends_at.replace(tzinfo=dt.timezone.utc)
+                secs = max(0, round((ends - now).total_seconds()))
+            out.append({"id": q.id, "question": q.question, "answer": q.answer,
+                        "prize": float(q.prize), "status": q.status, "winner": q.winner,
+                        "seconds_left": secs})
+    return {"quizzes": out}
 
 
 # ---------------- P2.5 : chat global + salons privés ----------------

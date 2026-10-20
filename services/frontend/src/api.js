@@ -105,8 +105,8 @@ export async function haCluster() {
 // ---- Jeu : leaderboard, managers banquier (enchères/quiz/intel), suspicion ----
 export const leaderboard = () => req("/api/leaderboard");
 export const bankAuctions = () => req("/api/bank/auctions");
-export const createAuction = (title, item_value, min_bid) =>
-  req("/api/bank/auctions", { method: "POST", body: JSON.stringify({ title, item_value, min_bid }) });
+export const createAuction = (title, item_value, min_bid, perk_kind, perk_value, duration) =>
+  req("/api/bank/auctions", { method: "POST", body: JSON.stringify({ title, item_value, min_bid, perk_kind, perk_value, duration }) });
 export const closeAuction = (id) => req(`/api/bank/auctions/${id}/close`, { method: "POST" });
 export const bankQuizzes = () => req("/api/bank/quizzes");
 export const createQuiz = (question, answer, prize) =>

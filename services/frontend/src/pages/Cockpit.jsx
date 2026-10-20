@@ -120,13 +120,29 @@ export default function Cockpit() {
     </div>
   );
 
+  const threats = (susp?.actors || []).filter((a) => (a.score || 0) > 0.3).length;
+  const blockedCount = (susp?.actors || []).filter((a) => a.blocked).length;
+  const remActive = rem?.state && rem.state !== "NORMAL" && rem.state !== "RECOVERED";
   return (
     <div className="max-w-5xl mx-auto p-5">
-      <div className="flex items-center gap-3 mb-5">
-        <h1 className="text-2xl font-extrabold">Cockpit de résilience</h1>
-        <span className="ml-auto inline-flex items-center gap-2 text-sm bg-white px-3 py-1.5 rounded-full shadow">
-          <span className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse"></span> Supervision active
-        </span>
+      {/* Hero défense */}
+      <div className="bg-gradient-to-br from-ink via-accent to-[#6C5CE7] text-white rounded-3xl p-6 shadow-xl mb-6">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <div className="text-[11px] tracking-widest font-bold opacity-80">RESILIENCE-ALPHA · DÉFENSE</div>
+            <h1 className="text-3xl font-black mt-1">Cockpit de résilience</h1>
+            <p className="text-sm opacity-85 mt-1 max-w-2xl">Supervision live, détection par IA et remédiation autonome de toute la plateforme.</p>
+          </div>
+          <span className="inline-flex items-center gap-2 text-sm bg-white/15 px-3 py-1.5 rounded-full">
+            <span className="w-2.5 h-2.5 rounded-full bg-green-400 animate-pulse"></span> Supervision active
+          </span>
+        </div>
+        <div className="flex gap-2 mt-4 flex-wrap">
+          <span className={`text-xs font-semibold px-3 py-1 rounded-full ${ml.flag ? "bg-red-500/40" : "bg-white/15"}`}>{ml.flag ? "⚠ Anomalie IA détectée" : ml.trained ? "✓ IA : comportement normal" : "🧠 IA en apprentissage"}</span>
+          <span className={`text-xs font-semibold px-3 py-1 rounded-full ${threats ? "bg-amber-500/40" : "bg-white/15"}`}>🎯 {threats} menace(s) suspecte(s)</span>
+          <span className={`text-xs font-semibold px-3 py-1 rounded-full ${blockedCount ? "bg-red-500/40" : "bg-white/15"}`}>⛔ {blockedCount} attaquant(s) bloqué(s)</span>
+          <span className={`text-xs font-semibold px-3 py-1 rounded-full ${remActive ? "bg-amber-500/40" : "bg-white/15"}`}>🛡️ {remActive ? "Remédiation en cours" : "Défense au repos"}</span>
+        </div>
       </div>
 
       {/* Bannière compromission (jeu) : l'IA a détecté un vol/fuite → bascule secours */}
