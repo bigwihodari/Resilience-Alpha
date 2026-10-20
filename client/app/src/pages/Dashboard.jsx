@@ -266,18 +266,24 @@ export default function Dashboard() {
                 </div>
               );
             })}
-            <div className="font-bold text-accent text-sm uppercase tracking-wide mt-4">Quiz</div>
-            {quizzes.filter((q) => q.status === "open").length === 0 && <div className="text-sm text-ink/50">Aucun quiz en cours.</div>}
-            {quizzes.filter((q) => q.status === "open").map((q) => (
-              <div key={q.id} className="bg-white rounded-2xl shadow p-4">
-                <div className="font-semibold text-ink">{q.question}</div>
-                <div className="text-xs text-green-600 font-semibold">Lot : {euro(q.prize)}</div>
-                <div className="flex gap-2 mt-2 items-center">
-                  <input id={`q-${q.id}`} className="flex-1 border border-lav rounded-lg px-2 py-1.5 text-sm" placeholder="Ta réponse…" />
-                  <button onClick={() => act(() => answerQuiz(q.id, document.getElementById(`q-${q.id}`).value), "Réponse envoyée")} className="text-sm bg-accent text-white font-semibold px-3 py-1.5 rounded-lg hover:bg-ink">Répondre</button>
+            <div className="font-bold text-accent text-sm uppercase tracking-wide mt-4">Quiz automatiques</div>
+            {quizzes.filter((q) => q.status === "open").length === 0 && <div className="text-sm text-ink/50">Aucun quiz en cours — un nouveau arrive bientôt…</div>}
+            {quizzes.filter((q) => q.status === "open").map((q) => {
+              const sl = secLeft(q);
+              return (
+                <div key={q.id} className="bg-white rounded-2xl shadow p-4">
+                  <div className="flex items-start gap-2">
+                    <span className="font-semibold text-ink flex-1">{q.question}</span>
+                    {sl != null && <span className={`text-xs font-mono font-bold px-2 py-0.5 rounded-full shrink-0 ${sl <= 10 ? "bg-red-100 text-red-700 animate-pulse" : "bg-lavsoft text-accent"}`}>⏳ {sl}s</span>}
+                  </div>
+                  <div className="text-xs text-green-600 font-semibold mt-1">🧠 Lot : {euro(q.prize)} — 1re bonne réponse</div>
+                  <div className="flex gap-2 mt-2 items-center">
+                    <input id={`q-${q.id}`} className="flex-1 border border-lav rounded-lg px-2 py-1.5 text-sm" placeholder="Ta réponse…" onKeyDown={(e) => { if (e.key === "Enter") act(() => answerQuiz(q.id, e.target.value), (r) => r.correct ? `Gagné ! +${euro(r.prize)}` : "Mauvaise réponse"); }} />
+                    <button onClick={() => act(() => answerQuiz(q.id, document.getElementById(`q-${q.id}`).value), (r) => r.correct ? `Gagné ! +${euro(r.prize)}` : "Mauvaise réponse")} className="text-sm bg-accent text-white font-semibold px-3 py-1.5 rounded-lg hover:bg-ink">Répondre</button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
           <div>
             <div className="font-bold text-accent text-sm uppercase tracking-wide mb-2">Boîte mail</div>

@@ -293,7 +293,7 @@
       </div>
       <!-- Enchères officielles : miser son butin (PvP éco) -->
       <div class="sub" style="grid-column:1/-1">
-        <h3>🔨 Enchères officielles (mise ton butin — PvP)</h3>
+        <h3>🔨 Enchères officielles (mise ton butin — PvP) <span style="float:right;color:var(--green);font-size:14px">💰 Butin dispo : <b id="tz-auction-loot">0 €</b></span></h3>
         <div class="note" style="margin:0 0 8px">Rafle le cash ou prive les clients de leurs lots. La mise est réglée avec ton butin détenu.</div>
         <div id="tz-auctions" class="vrows"><p class="note">Chargement…</p></div>
       </div>
@@ -462,6 +462,7 @@ function renderGame(s){
   const t = s.target || {};
   // Scoreboard butin
   $("sb-loot").textContent = (t.loot||0).toFixed(0)+" €";
+  { const al=$("tz-auction-loot"); if(al) al.textContent=(t.loot||0).toFixed(0)+" €"; }
   $("sb-exf").textContent  = (t.exfiltrated_total||0).toFixed(0)+" €";
   $("sb-neu").textContent  = (t.loot_neutralized||0).toFixed(0)+" €";
   // Tuiles

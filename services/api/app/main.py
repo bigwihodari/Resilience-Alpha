@@ -516,6 +516,7 @@ class Quiz(Base):
     status: Mapped[str] = mapped_column(String(12), default="open")  # open|closed
     winner: Mapped[str] = mapped_column(String(64), nullable=True)
     created_by: Mapped[str] = mapped_column(String(64))
+    ends_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=True)  # timer du quiz auto
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now())
 
@@ -721,6 +722,7 @@ def startup():
         c.execute(text("ALTER TABLE auctions ADD COLUMN IF NOT EXISTS perk_value VARCHAR(64) NOT NULL DEFAULT ''"))
         c.execute(text("ALTER TABLE auctions ADD COLUMN IF NOT EXISTS auto INTEGER NOT NULL DEFAULT 0"))
         c.execute(text("ALTER TABLE bids ADD COLUMN IF NOT EXISTS bidder_kind VARCHAR(12) NOT NULL DEFAULT 'client'"))
+        c.execute(text("ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS ends_at TIMESTAMPTZ"))
         c.execute(text("CREATE TABLE IF NOT EXISTS quizzes ("
                        "id SERIAL PRIMARY KEY, question VARCHAR(500) NOT NULL, answer VARCHAR(140) NOT NULL, "
                        "prize NUMERIC(14,2) NOT NULL, status VARCHAR(12) NOT NULL DEFAULT 'open', "
@@ -777,6 +779,7 @@ def startup():
         threading.Thread(target=replicate_loop, daemon=True).start()
     threading.Thread(target=savings_interest_loop, daemon=True).start()
     threading.Thread(target=auction_engine_loop, daemon=True).start()
+    threading.Thread(target=quiz_engine_loop, daemon=True).start()
 
 
 @app.get("/health")
@@ -1977,6 +1980,75 @@ class AnswerIn(BaseModel):
     answer: str
 
 
+# ------- Quiz AUTOMATIQUES : config / banque de questions / moteur -------
+QUIZ_POOL = int(os.environ.get("QUIZ_POOL", "1"))             # quiz ouverts en continu
+QUIZ_DURATION = float(os.environ.get("QUIZ_DURATION", "120")) # s avant expiration auto
+QUIZ_TICK = float(os.environ.get("QUIZ_TICK", "4"))           # s entre deux passages du moteur
+QUIZ_PRIZE_MIN = float(os.environ.get("QUIZ_PRIZE_MIN", "1500"))
+QUIZ_PRIZE_MAX = float(os.environ.get("QUIZ_PRIZE_MAX", "6000"))
+# Réponses simples (1 mot / 1 nombre) : comparaison insensible à la casse/espaces.
+QUIZ_BANK = [
+    ("Capitale de la France ?", "Paris"),
+    ("Combien font 7 x 8 ?", "56"),
+    ("Couleur obtenue en mélangeant bleu et jaune ?", "vert"),
+    ("Combien de continents sur Terre ?", "7"),
+    ("Planète surnommée la planète rouge ?", "Mars"),
+    ("Combien de côtés a un hexagone ?", "6"),
+    ("Monnaie unique de la zone euro ?", "euro"),
+    ("Combien font 12 x 12 ?", "144"),
+    ("Animal surnommé le roi de la jungle ?", "lion"),
+    ("Combien de minutes dans une heure ?", "60"),
+    ("Métal précieux de symbole Au ?", "or"),
+    ("Capitale de l'Italie ?", "Rome"),
+    ("Combien font 100 - 37 ?", "63"),
+    ("Astre qui éclaire la Terre le jour ?", "soleil"),
+    ("Combien de joueurs dans une équipe de foot sur le terrain ?", "11"),
+]
+
+
+def _create_quiz(s, question, answer, prize, created_by, duration):
+    q = Quiz(question=str(question).strip()[:500], answer=str(answer).strip()[:140],
+             prize=round(float(prize), 2), status="open", created_by=created_by,
+             ends_at=dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=duration))
+    s.add(q)
+    s.flush()
+    _mail_clients(s, "Nouveau quiz !",
+                  f"Question : {q.question}\nLot : {float(q.prize):.0f} € pour la 1re bonne réponse. "
+                  f"Timer {int(duration)} s. Réponds depuis l'onglet Marché !", "quiz")
+    return q
+
+
+def quiz_engine_loop():
+    """Moteur de quiz AUTOMATIQUE : expire les quiz dont le timer est écoulé et
+    maintient un pool de quiz ouverts (banque de questions). Pas besoin du banquier."""
+    while True:
+        time.sleep(QUIZ_TICK)
+        if not repl_state.get("promoted"):
+            continue
+        try:
+            now = dt.datetime.now(dt.timezone.utc)
+            opened = []
+            with Session(engine()) as s:
+                due = s.scalars(select(Quiz).where(Quiz.status == "open", Quiz.created_by == "auto",
+                                                   Quiz.ends_at.is_not(None),
+                                                   Quiz.ends_at <= now).with_for_update()).all()
+                for q in due:
+                    q.status = "closed"
+                n_open = int(s.scalar(select(func.count()).select_from(Quiz)
+                                      .where(Quiz.status == "open", Quiz.created_by == "auto")) or 0)
+                for _ in range(max(0, QUIZ_POOL - n_open)):
+                    qa = random.choice(QUIZ_BANK)
+                    prize = float(round(random.uniform(QUIZ_PRIZE_MIN, QUIZ_PRIZE_MAX), -2))
+                    q = _create_quiz(s, qa[0], qa[1], prize, "auto", QUIZ_DURATION)
+                    opened.append(q.id)
+                s.commit()
+            if opened:
+                ws_manager.publish({"type": "quiz", "op": "open", "id": opened[-1]})
+                ws_manager.publish({"type": "mail"})
+        except Exception:  # noqa: BLE001
+            pass
+
+
 @app.post("/bank/quizzes")
 def bank_create_quiz(body: QuizIn, banker: str = Depends(require_banker)):
     if body.prize <= 0:
@@ -1984,13 +2056,7 @@ def bank_create_quiz(body: QuizIn, banker: str = Depends(require_banker)):
     if not (body.answer or "").strip():
         raise HTTPException(400, "réponse vide")
     with Session(engine()) as s:
-        q = Quiz(question=(body.question or "").strip()[:500], answer=body.answer.strip()[:140],
-                 prize=round(float(body.prize), 2), status="open", created_by=banker)
-        s.add(q)
-        s.flush()
-        _mail_clients(s, "Quiz de la banque !",
-                      f"Question : {q.question}\nLot : {float(q.prize):.0f} € pour la 1re bonne réponse. "
-                      f"Répondez vite depuis l'onglet Quiz !", "quiz")
+        q = _create_quiz(s, body.question or "", body.answer, body.prize, banker, QUIZ_DURATION)
         qid = q.id
         s.commit()
     ws_manager.publish({"type": "quiz", "op": "open", "id": qid})
@@ -2000,11 +2066,19 @@ def bank_create_quiz(body: QuizIn, banker: str = Depends(require_banker)):
 
 @app.get("/quizzes")
 def list_quizzes(user: str = Depends(current_user)):
-    """Quiz visibles par les joueurs (sans la réponse)."""
+    """Quiz visibles par les joueurs (sans la réponse) + timer restant."""
+    now = dt.datetime.now(dt.timezone.utc)
     with Session(engine()) as s:
         rows = s.scalars(select(Quiz).order_by(Quiz.id.desc()).limit(20)).all()
-    return {"quizzes": [{"id": q.id, "question": q.question, "prize": float(q.prize),
-                         "status": q.status, "winner": q.winner} for q in rows]}
+        out = []
+        for q in rows:
+            secs = None
+            if q.ends_at is not None:
+                ends = q.ends_at if q.ends_at.tzinfo else q.ends_at.replace(tzinfo=dt.timezone.utc)
+                secs = max(0, round((ends - now).total_seconds()))
+            out.append({"id": q.id, "question": q.question, "prize": float(q.prize),
+                        "status": q.status, "winner": q.winner, "seconds_left": secs})
+    return {"quizzes": out}
 
 
 @app.post("/quizzes/{quiz_id}/answer")
