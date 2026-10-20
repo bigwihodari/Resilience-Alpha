@@ -22,6 +22,19 @@ export async function getAccount() { const r = await fetch("/api/accounts/me", {
 export async function listTx() { const r = await fetch("/api/transactions", { headers: authH() }); if (!r.ok) throw new Error("historique indisponible"); return r.json(); }
 export async function searchUsers(q) { const r = await fetch("/api/users?q=" + encodeURIComponent(q), { headers: authH() }); if (!r.ok) return []; return r.json(); }
 
+// ---- Destinataires favoris (paiement en un clic) ----
+export async function listFavorites() { const r = await fetch("/api/favorites", { headers: authH() }); if (!r.ok) return []; return r.json(); }
+export const addFavorite = (username) => jpost("/api/favorites", { username }, authH());
+export async function removeFavorite(username) {
+  const r = await fetch("/api/favorites/" + encodeURIComponent(username), { method: "DELETE", headers: authH() });
+  if (!r.ok) throw new Error("suppression impossible"); return r.json();
+}
+
+// ---- Livret d'epargne ----
+export async function getSavings() { const r = await fetch("/api/savings", { headers: authH() }); if (!r.ok) throw new Error("épargne indisponible"); return r.json(); }
+export const savingsDeposit = (amount) => jpost("/api/savings/deposit", { amount }, authH());
+export const savingsWithdraw = (amount) => jpost("/api/savings/withdraw", { amount }, authH());
+
 // Paiement résilient : même clé d'idempotence sur tous les essais -> si le serveur
 // bascule (principal KO), le ré-essai aboutit sans double débit (exactly-once).
 export async function pay(recipient, amount, onRetry) {

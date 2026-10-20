@@ -25,6 +25,8 @@ DEMO_USER = os.environ.get("DEMO_USER", "alice")
 DEMO_PASSWORD = os.environ.get("DEMO_PASSWORD", "password123")
 BANKER_USER = os.environ.get("BANKER_USER", "banquier")
 BANKER_PASSWORD = os.environ.get("BANKER_PASSWORD", DEMO_PASSWORD)
+CANARY_USER = os.environ.get("CANARY_USER", "canary")
+CANARY_PASSWORD = os.environ.get("CANARY_PASSWORD", DEMO_PASSWORD)
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "orchestrator-admin-token")
 INTERNAL_TOKEN = os.environ.get("INTERNAL_TOKEN", "internal-trusted-token")
 
@@ -158,6 +160,17 @@ def startup():
             s.add(User(username=BANKER_USER, password_hash=hash_pw(BANKER_PASSWORD), role="banker"))
         else:
             banker.role = "banker"  # garantit le rôle même sur une base déjà créée
+        # Compte systeme pour la transaction canari de l'orchestrateur (ne JAMAIS
+        # utiliser un vrai client : sinon on le draine). Solde large, role 'system'
+        # (exclu de l'annuaire et de la vue banquier).
+        canary = s.scalar(select(User).where(User.username == CANARY_USER))
+        if canary is None:
+            cu = User(username=CANARY_USER, password_hash=hash_pw(CANARY_PASSWORD), role="system")
+            s.add(cu)
+            s.flush()
+            s.add(Account(user_id=cu.id, balance=1000000000, currency="EUR"))
+        else:
+            canary.role = "system"
         s.commit()
 
 

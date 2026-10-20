@@ -126,7 +126,10 @@ export default function Banker() {
                 className={`w-full flex items-center justify-between px-4 py-3 border-b border-lavsoft text-left hover:bg-lavsoft transition ${selected === a.username ? "bg-lavsoft" : ""}`}
               >
                 <span className="font-semibold text-ink">{a.username}</span>
-                <span className="font-mono text-ink/80">{euro(a.balance)}</span>
+                <span className="text-right">
+                  <span className="font-mono text-ink/80 block">{euro(a.balance)}</span>
+                  {a.savings > 0 && <span className="font-mono text-[11px] text-green-600 block">livret {euro(a.savings)}</span>}
+                </span>
               </button>
             ))}
           </div>

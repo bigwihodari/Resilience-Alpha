@@ -11,8 +11,18 @@ CREATE TABLE IF NOT EXISTS accounts (
     id         SERIAL PRIMARY KEY,
     user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     balance    NUMERIC(14,2) NOT NULL DEFAULT 0,
+    savings    NUMERIC(14,2) NOT NULL DEFAULT 0,   -- livret d'epargne
     currency   VARCHAR(3) NOT NULL DEFAULT 'EUR',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Destinataires favoris (paiement en un clic, sans recherche).
+CREATE TABLE IF NOT EXISTS favorites (
+    id           SERIAL PRIMARY KEY,
+    user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    fav_username VARCHAR(64) NOT NULL,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (user_id, fav_username)
 );
 
 CREATE TABLE IF NOT EXISTS transactions (

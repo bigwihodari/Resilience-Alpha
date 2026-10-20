@@ -35,6 +35,9 @@ PEER_API_URL = os.environ.get("PEER_API_URL", "")     # URL de l'api du pair (pr
 REPL_TOKEN = os.environ.get("REPL_TOKEN", "repl-secret")
 REPL_INTERVAL = float(os.environ.get("REPL_INTERVAL", "2"))
 HA_NAME = os.environ.get("HA_NAME", "PRINCIPAL" if ROLE == "primary" else "SECOURS")
+# Livret d'epargne : taux applique toutes les SAVINGS_INTERVAL secondes.
+SAVINGS_RATE = float(os.environ.get("SAVINGS_RATE", "0.01"))       # 1% par cycle (demo)
+SAVINGS_INTERVAL = float(os.environ.get("SAVINGS_INTERVAL", "30"))  # secondes
 FAIL_PROMOTE = int(os.environ.get("FAIL_PROMOTE", "3"))       # échecs avant promotion du secours
 FAILBACK_CONFIRM = int(os.environ.get("FAILBACK_CONFIRM", "3"))  # cycles OK avant retour au principal
 repl_state = {"role": ROLE, "name": HA_NAME, "promoted": ROLE == "primary", "peer": PEER_API_URL,
@@ -88,7 +91,15 @@ class Account(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     balance: Mapped[float] = mapped_column(Numeric(14, 2))
+    savings: Mapped[float] = mapped_column(Numeric(14, 2), default=0)   # livret d'epargne
     currency: Mapped[str] = mapped_column(String(3))
+
+
+class Favorite(Base):
+    __tablename__ = "favorites"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    fav_username: Mapped[str] = mapped_column(String(64))
 
 
 class Transaction(Base):
@@ -216,8 +227,14 @@ def startup():
         c.execute(text("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS idem_key VARCHAR(64)"))
         c.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_tx_idem ON transactions(idem_key) WHERE idem_key IS NOT NULL"))
         c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(16) NOT NULL DEFAULT 'client'"))
+        c.execute(text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS savings NUMERIC(14,2) NOT NULL DEFAULT 0"))
+        c.execute(text("CREATE TABLE IF NOT EXISTS favorites ("
+                       "id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, "
+                       "fav_username VARCHAR(64) NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), "
+                       "UNIQUE(user_id, fav_username))"))
     if ROLE == "backup" and PEER_API_URL:
         threading.Thread(target=replicate_loop, daemon=True).start()
+    threading.Thread(target=savings_interest_loop, daemon=True).start()
 
 
 @app.get("/health")
@@ -234,7 +251,9 @@ def my_account(user: str = Depends(current_user)):
         acc = s.scalar(select(Account).where(Account.user_id == u.id))
         if acc is None:
             raise HTTPException(404, "account not found")
-        return {"username": user, "balance": float(acc.balance), "currency": acc.currency}
+        return {"username": user, "balance": float(acc.balance), "savings": float(acc.savings),
+                "savings_rate": SAVINGS_RATE, "savings_interval": SAVINGS_INTERVAL,
+                "currency": acc.currency}
 
 
 @app.post("/transactions")
@@ -245,7 +264,9 @@ def create_transaction(body: TxIn, user: str = Depends(current_user)):
     key = body.idempotency_key
     with Session(engine()) as s:
         u = s.scalar(select(User).where(User.username == user))
-        acc = s.scalar(select(Account).where(Account.user_id == u.id)) if u else None
+        # Verrou de ligne (FOR UPDATE) : serialise les debits concurrents sur le meme
+        # compte -> plus de solde negatif sous charge (attaque + canari + paiements).
+        acc = s.scalar(select(Account).where(Account.user_id == u.id).with_for_update()) if u else None
         if acc is None:
             raise HTTPException(404, "account not found")
 
@@ -258,7 +279,7 @@ def create_transaction(body: TxIn, user: str = Depends(current_user)):
                         "recipient": prior.recipient, "new_balance": float(acc.balance),
                         "resumed": True}
 
-        # Destinataire : utilisateur connu -> transfert (crédit) ; sinon marchand externe.
+        # Destinataire : CLIENT connu -> transfert (crédit) ; sinon marchand externe.
         rec_user = s.scalar(select(User).where(User.username == body.recipient)) if body.recipient else None
         if rec_user is not None and rec_user.id == u.id:
             raise HTTPException(400, "cannot pay yourself")
@@ -270,8 +291,8 @@ def create_transaction(body: TxIn, user: str = Depends(current_user)):
                          recipient=body.recipient, status="completed", idem_key=key)
         s.add(tx)
         credited = False
-        if rec_user is not None:
-            rec_acc = s.scalar(select(Account).where(Account.user_id == rec_user.id))
+        if rec_user is not None and (rec_user.role or "client") == "client":
+            rec_acc = s.scalar(select(Account).where(Account.user_id == rec_user.id).with_for_update())
             if rec_acc is not None:
                 rec_acc.balance = float(rec_acc.balance) + body.amount
                 s.add(Transaction(account_id=rec_acc.id, amount=body.amount, type="credit",
@@ -300,7 +321,7 @@ def create_transaction(body: TxIn, user: str = Depends(current_user)):
 def list_users(q: str = "", user: str = Depends(current_user)):
     """Annuaire : clients enregistrés disponibles (recherche par nom)."""
     with Session(engine()) as s:
-        stmt = select(User.username).where(User.username != user, User.role != "banker")
+        stmt = select(User.username).where(User.username != user, User.role == "client")
         if q:
             stmt = stmt.where(User.username.ilike(f"%{q}%"))
         rows = s.scalars(stmt.order_by(User.username).limit(20)).all()
@@ -329,6 +350,132 @@ def list_transactions(user: str = Depends(current_user)):
         ]
 
 
+# ---------------- Livret d'epargne ----------------
+class SavingsOp(BaseModel):
+    amount: float
+
+
+@app.get("/savings")
+def get_savings(user: str = Depends(current_user)):
+    with Session(engine()) as s:
+        u = s.scalar(select(User).where(User.username == user))
+        acc = s.scalar(select(Account).where(Account.user_id == u.id)) if u else None
+        if acc is None:
+            raise HTTPException(404, "account not found")
+        return {"balance": float(acc.balance), "savings": float(acc.savings),
+                "rate": SAVINGS_RATE, "interval": SAVINGS_INTERVAL}
+
+
+def _savings_move(user: str, amount: float, op: str):
+    if amount <= 0:
+        raise HTTPException(400, "le montant doit être positif")
+    with Session(engine()) as s:
+        u = s.scalar(select(User).where(User.username == user))
+        acc = s.scalar(select(Account).where(Account.user_id == u.id).with_for_update()) if u else None
+        if acc is None:
+            raise HTTPException(404, "account not found")
+        if op == "deposit":
+            if float(acc.balance) < amount:
+                raise HTTPException(402, "solde courant insuffisant")
+            acc.balance = float(acc.balance) - amount
+            acc.savings = float(acc.savings) + amount
+            s.add(Transaction(account_id=acc.id, amount=amount, type="debit",
+                              recipient="LIVRET (dépôt)", status="completed"))
+        else:  # withdraw
+            if float(acc.savings) < amount:
+                raise HTTPException(402, "épargne insuffisante")
+            acc.savings = float(acc.savings) - amount
+            acc.balance = float(acc.balance) + amount
+            s.add(Transaction(account_id=acc.id, amount=amount, type="credit",
+                              recipient="LIVRET (retrait)", status="completed"))
+        s.commit()
+        b, sv = float(acc.balance), float(acc.savings)
+    ws_manager.publish({"type": "tx", "from": user, "to": "LIVRET", "amount": amount, "op": op})
+    return {"status": "completed", "balance": b, "savings": sv}
+
+
+@app.post("/savings/deposit")
+def savings_deposit(body: SavingsOp, user: str = Depends(current_user)):
+    return _savings_move(user, body.amount, "deposit")
+
+
+@app.post("/savings/withdraw")
+def savings_withdraw(body: SavingsOp, user: str = Depends(current_user)):
+    return _savings_move(user, body.amount, "withdraw")
+
+
+def savings_interest_loop():
+    """Ajoute les intérêts du livret toutes les SAVINGS_INTERVAL s (noeud autoritaire)."""
+    while True:
+        time.sleep(SAVINGS_INTERVAL)
+        if not repl_state.get("promoted") or SAVINGS_RATE <= 0:
+            continue
+        try:
+            touched = False
+            with Session(engine()) as s:
+                accts = s.scalars(select(Account).where(Account.savings > 0)).all()
+                for a in accts:
+                    interest = round(float(a.savings) * SAVINGS_RATE, 2)
+                    if interest <= 0:
+                        continue
+                    a.savings = float(a.savings) + interest
+                    s.add(Transaction(account_id=a.id, amount=interest, type="credit",
+                                      recipient="LIVRET (intérêts)", status="completed"))
+                    touched = True
+                s.commit()
+            if touched:
+                ws_manager.publish({"type": "tx", "from": "LIVRET", "to": "", "amount": 0, "op": "interest"})
+        except Exception:  # noqa: BLE001
+            pass
+
+
+# ---------------- Destinataires favoris ----------------
+class FavIn(BaseModel):
+    username: str
+
+
+@app.get("/favorites")
+def list_favorites(user: str = Depends(current_user)):
+    with Session(engine()) as s:
+        u = s.scalar(select(User).where(User.username == user))
+        rows = s.scalars(
+            select(Favorite.fav_username).where(Favorite.user_id == u.id)
+            .order_by(Favorite.fav_username)
+        ).all() if u else []
+    return [{"username": r} for r in rows]
+
+
+@app.post("/favorites")
+def add_favorite(body: FavIn, user: str = Depends(current_user)):
+    waf_scan("api/favorites", username=body.username)
+    with Session(engine()) as s:
+        u = s.scalar(select(User).where(User.username == user))
+        target = s.scalar(select(User).where(User.username == body.username))
+        if target is None or (target.role or "client") != "client" or target.id == u.id:
+            raise HTTPException(400, "destinataire invalide")
+        exists = s.scalar(select(Favorite).where(
+            Favorite.user_id == u.id, Favorite.fav_username == body.username))
+        if exists is None:
+            s.add(Favorite(user_id=u.id, fav_username=body.username))
+            try:
+                s.commit()
+            except IntegrityError:
+                s.rollback()
+    return {"status": "ok", "username": body.username}
+
+
+@app.delete("/favorites/{username}")
+def del_favorite(username: str, user: str = Depends(current_user)):
+    with Session(engine()) as s:
+        u = s.scalar(select(User).where(User.username == user))
+        fav = s.scalar(select(Favorite).where(
+            Favorite.user_id == u.id, Favorite.fav_username == username)) if u else None
+        if fav is not None:
+            s.delete(fav)
+            s.commit()
+    return {"status": "deleted", "username": username}
+
+
 # ---------------- Interface banquier (rôle 'banker') ----------------
 class BankOp(BaseModel):
     username: str                 # client visé
@@ -341,15 +488,16 @@ def bank_accounts(banker: str = Depends(require_banker)):
     """Tous les comptes clients avec leur solde (vue banquier)."""
     with Session(engine()) as s:
         rows = s.execute(
-            select(User.username, Account.balance, Account.currency)
+            select(User.username, Account.balance, Account.savings, Account.currency)
             .join(Account, Account.user_id == User.id)
-            .where(User.role != "banker")
+            .where(User.role == "client")
             .order_by(User.username)
         ).all()
-        total = sum(float(r.balance) for r in rows)
+        total = sum(float(r.balance) + float(r.savings) for r in rows)
     return {
         "accounts": [
-            {"username": r.username, "balance": float(r.balance), "currency": r.currency}
+            {"username": r.username, "balance": float(r.balance),
+             "savings": float(r.savings), "currency": r.currency}
             for r in rows
         ],
         "count": len(rows),
@@ -462,7 +610,8 @@ def _local_dump():
         for a in accounts:
             uname = id2name.get(a.user_id)
             acc_by_user[a.id] = uname
-            out_accounts.append({"username": uname, "balance": float(a.balance), "currency": a.currency})
+            out_accounts.append({"username": uname, "balance": float(a.balance),
+                                 "savings": float(a.savings), "currency": a.currency})
         txs = s.scalars(select(Transaction).where(Transaction.idem_key.is_not(None))).all()
         out_tx = [{"idem_key": t.idem_key, "username": acc_by_user.get(t.account_id),
                    "amount": float(t.amount), "type": t.type, "recipient": t.recipient,
@@ -562,9 +711,11 @@ def apply_dump(data):
                 continue
             acc = s.scalar(select(Account).where(Account.user_id == usr.id))
             if acc is None:
-                s.add(Account(user_id=usr.id, balance=a["balance"], currency=a.get("currency", "EUR")))
+                s.add(Account(user_id=usr.id, balance=a["balance"], savings=a.get("savings", 0),
+                              currency=a.get("currency", "EUR")))
             else:
                 acc.balance = a["balance"]
+                acc.savings = a.get("savings", float(acc.savings))
         for t in data.get("transactions", []):
             if not t.get("idem_key"):
                 continue
