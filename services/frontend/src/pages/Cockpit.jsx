@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
-import { promInstant, promRange, scalar, orchStatus } from "../api.js";
+import { promInstant, promRange, scalar, orchStatus, gameSuspicion } from "../api.js";
 
 const SERVICES = [
   { job: "api", label: "API paiement" },
@@ -32,6 +32,7 @@ export default function Cockpit() {
   const [ml, setMl] = useState({ score: 0, flag: false, trained: false });
   const [anomSeries, setAnomSeries] = useState([]);
   const [rem, setRem] = useState(null);
+  const [susp, setSusp] = useState(null);
   const timer = useRef(null);
 
   async function refresh() {
@@ -86,6 +87,7 @@ export default function Cockpit() {
 
     // Moteur de remédiation
     setRem(await orchStatus());
+    setSusp(await gameSuspicion());
   }
 
   useEffect(() => {
@@ -290,6 +292,38 @@ export default function Cockpit() {
             <div className="mt-1 text-sm text-ink/40">Pas encore contrôlée</div>
           )}
         </div>
+      </div>
+
+      {/* Suspicion par IP (détection IA, blocage probabiliste isolé) */}
+      <h2 className="text-sm font-bold uppercase tracking-wide text-accent mb-2">Menaces — suspicion par IP (IA)</h2>
+      <div className="bg-white rounded-2xl shadow p-5 mb-6">
+        {(!susp || !(susp.actors || []).length) ? (
+          <div className="text-sm text-ink/50">Aucun acteur suspect — trafic sain.</div>
+        ) : (
+          <div className="space-y-2">
+            {(susp.actors || []).slice().sort((a, b) => (b.score || 0) - (a.score || 0)).map((a) => {
+              const pct = Math.round((a.score || 0) * 100);
+              const tone = a.blocked ? "bg-red-500" : pct > 60 ? "bg-amber-500" : "bg-green-500";
+              return (
+                <div key={a.actor} className="flex items-center gap-3">
+                  <div className="w-40 shrink-0">
+                    <div className="font-semibold text-sm text-ink truncate">{a.actor}</div>
+                    <div className="text-[11px] text-ink/40 font-mono">{a.ip || "—"}</div>
+                  </div>
+                  <div className="flex-1 h-3 bg-lavsoft rounded-full overflow-hidden">
+                    <div className={`h-full ${tone} transition-all`} style={{ width: `${Math.max(3, pct)}%` }} />
+                  </div>
+                  <div className="w-44 text-right text-xs">
+                    <span className="font-mono text-ink">{pct}%</span>
+                    <span className="text-ink/40"> · p.blocage {Math.round((a.p_block || 0) * 100)}%</span>
+                    {a.blocked && <span className="ml-1 text-red-600 font-bold">⛔ bloqué</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <div className="text-[11px] text-ink/40 mt-3">Blocage probabiliste (plus la suspicion monte, plus le risque de blocage augmente) et isolé par IP — seul le suspect est bloqué.</div>
       </div>
 
       {/* Outils avancés (repli, optionnel) */}
