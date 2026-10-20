@@ -1,4 +1,4 @@
-# App Client — mise à jour. Windows / PowerShell.
+# App Client - mise a jour. Windows / PowerShell.
 $ErrorActionPreference = "Stop"
 Write-Host "[..] git pull..."
 git pull

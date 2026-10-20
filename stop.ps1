@@ -1,5 +1,5 @@
-# Resilience-Alpha — ARRÊTE TOUT (host principal/secours + client + attaquant).
-# Les données (volumes) sont conservées. Windows / PowerShell.
+# Resilience-Alpha - ARRETE TOUT (host principal/secours + client + attaquant).
+# Les donnees (volumes) sont conservees. Windows / PowerShell.
 Write-Host "[..] Arret du serveur HOST..."
 docker compose down
 Write-Host "[..] Arret du host de secours (si present)..."

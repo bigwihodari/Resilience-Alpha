@@ -1,4 +1,4 @@
-# Console Attaquant — mise à jour. Windows / PowerShell.
+# Console Attaquant - mise a jour. Windows / PowerShell.
 $ErrorActionPreference = "Stop"
 Write-Host "[..] git pull..."
 git pull

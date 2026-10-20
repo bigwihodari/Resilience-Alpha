@@ -1,5 +1,5 @@
-# Resilience-Alpha — mise à jour du SERVEUR HOST. Windows / PowerShell.
-# git pull + reconstruction/redémarrage propre (même si la stack tourne déjà).
+# Resilience-Alpha - mise a jour du SERVEUR HOST. Windows / PowerShell.
+# git pull + reconstruction/redemarrage propre (meme si la stack tourne deja).
 $ErrorActionPreference = "Stop"
 Write-Host "[..] Recuperation du code (git pull)..."
 git pull

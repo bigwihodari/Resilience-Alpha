@@ -1,4 +1,4 @@
-# Resilience-Alpha — SERVEUR HOST (principal ou secours). Windows / PowerShell.
+# Resilience-Alpha - SERVEUR HOST (principal ou secours). Windows / PowerShell.
 $ErrorActionPreference = "Stop"
 if (-not (Test-Path ".env")) { Copy-Item ".env.example" ".env"; Write-Host "[ok] .env cree depuis .env.example" }
 
@@ -24,7 +24,7 @@ $graf = Get-EnvVal "GRAFANA_PORT" "3000"
 $prom = Get-EnvVal "PROMETHEUS_PORT" "9090"
 Write-Host ""
 Write-Host "==================================================================="
-Write-Host "  RESILIENCE-ALPHA — SERVEUR HOST (role : $role) lance."
+Write-Host "  RESILIENCE-ALPHA - SERVEUR HOST (role : $role) lance."
 Write-Host "  >> Cockpit / supervision :  http://localhost:$front"
 Write-Host "   - Cockpit ........... http://localhost:$front/cockpit"
 Write-Host "   - API (Swagger) ..... http://localhost:$api/docs"
