@@ -42,6 +42,28 @@
   .links a:hover{border-color:var(--accent)}
   .codes{font-size:12px;color:var(--muted);margin-top:8px}
   .note{font-size:11px;color:var(--muted);margin-top:10px;line-height:1.5}
+  /* liste multi-sélection des vecteurs */
+  .vectors{display:flex;flex-direction:column;gap:8px;max-height:280px;overflow:auto;margin-top:4px}
+  .vec{display:flex;gap:10px;align-items:flex-start;background:#11142a;border:1px solid var(--line);
+       border-radius:10px;padding:10px;cursor:pointer}
+  .vec:hover{border-color:var(--accent)}
+  .vec input{margin-top:2px;width:auto;flex:0 0 auto}
+  .vec .vlabel{font-size:13px;font-weight:700;color:var(--txt)}
+  .vec .vdesc{font-size:11px;color:var(--muted);margin-top:2px;line-height:1.4}
+  .btns.wrap-btns{flex-wrap:wrap}
+  .allgo{background:var(--accent);color:#fff;flex-basis:100%} .allgo:hover{background:#7d6ff0}
+  /* panneau par vecteur en direct */
+  .vrows{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+  .vrow{display:flex;align-items:center;gap:8px;font-size:12.5px;background:#11142a;
+        border:1px solid var(--line);border-radius:8px;padding:7px 10px}
+  .vrow .vdot{width:9px;height:9px;border-radius:50%;background:var(--muted);flex:0 0 auto}
+  .vrow .vdot.on{background:var(--red);box-shadow:0 0 8px var(--red);animation:pulse 1s infinite}
+  .vrow .vname{font-weight:700;flex:1}
+  .vrow .vstat{color:var(--muted)}
+  .vrow .vstat b{color:var(--txt)} .vrow .vstat .e{color:var(--red2)}
+  .vrow .vstop{margin-left:4px;font-size:11px;padding:3px 8px;border-radius:6px;background:#2a2f4a;
+               color:var(--txt);border:0;cursor:pointer;flex:0 0 auto}
+  .vrow .vstop:hover{background:#363c5e}
   @media(max-width:760px){.grid{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(2,1fr)}}
 </style>
 </head>
@@ -56,19 +78,18 @@
   <div class="grid">
     <!-- Contrôles -->
     <div class="panel">
-      <h2>Lancer une attaque</h2>
-      <label>Type d'attaque</label>
-      <select id="type">
-        <option value="dos">Saturation (déni de service)</option>
-        <option value="sqli">Injection SQL</option>
-      </select>
-      <label>Intensité <span class="val" id="intv">20</span></label>
-      <input type="range" id="intensity" min="1" max="80" value="20" />
+      <h2>Vecteurs d'attaque</h2>
+      <div class="vectors" id="vectors">
+        <p class="note" id="vec-loading">Chargement des vecteurs…</p>
+      </div>
+      <label>Intensité (threads / vecteur) <span class="val" id="intv">20</span></label>
+      <input type="range" id="intensity" min="1" max="100" value="20" />
       <label>Durée (s) <span class="val" id="durv">60</span></label>
-      <input type="range" id="duration" min="10" max="300" value="60" step="5" />
-      <div class="btns">
-        <button class="go" id="start">▶ Lancer</button>
-        <button class="stop" id="stopb" disabled>■ Stop</button>
+      <input type="range" id="duration" min="5" max="300" value="60" step="5" />
+      <div class="btns wrap-btns">
+        <button class="go" id="start">▶ Lancer la sélection</button>
+        <button class="stop" id="stopb" disabled>■ Stop tout</button>
+        <button class="allgo" id="startall">☢ TOUT LANCER</button>
       </div>
       <div class="bar"><i id="prog"></i></div>
 
@@ -93,6 +114,8 @@
       </div>
       <canvas id="chart" height="150"></canvas>
       <div class="codes" id="codes">Codes de réponse : —</div>
+      <h2 style="margin-top:18px">Vecteurs en cours</h2>
+      <div class="vrows" id="vrows"><p class="note">Aucun vecteur actif.</p></div>
     </div>
   </div>
 </div>
@@ -121,34 +144,102 @@ chart = new Chart(ctx, {
 });
 } catch (e) { console.warn("Chart indisponible, KPIs seuls:", e); }
 
-async function post(path){ return (await fetch(path, {method:"POST", headers:{"Content-Type":"application/json"},
-  body: JSON.stringify({type:$("type").value, intensity:+$("intensity").value, duration:+$("duration").value})})).json(); }
+// --- envoi des requêtes de contrôle ---
+function body(extra){ return JSON.stringify(Object.assign(
+  {intensity:+$("intensity").value, duration:+$("duration").value}, extra||{})); }
+async function post(path, extra){
+  return (await fetch(path, {method:"POST", headers:{"Content-Type":"application/json"},
+    body: body(extra)})).json();
+}
 
-$("start").onclick = async () => { await post("/api/attack/start"); };
-$("stopb").onclick = async () => { await fetch("/api/attack/stop",{method:"POST"}); };
+// vecteurs cochés
+function selectedTypes(){
+  return Array.from(document.querySelectorAll(".vec input:checked")).map(el=>el.value);
+}
+
+$("start").onclick = async () => {
+  const types = selectedTypes();
+  if (!types.length) return;            // rien de coché → ne rien faire
+  await post("/api/attack/start", {types});
+};
+$("startall").onclick = async () => { await post("/api/attack/start_all"); };
+$("stopb").onclick = async () => {
+  await fetch("/api/attack/stop", {method:"POST", headers:{"Content-Type":"application/json"}, body:"{}"});
+};
+
+// --- construction dynamique de la liste des vecteurs (une seule fois) ---
+let vectorsBuilt = false;
+function buildVectors(vectors){
+  if (vectorsBuilt || !vectors || !vectors.length) return;
+  const box = $("vectors");
+  box.innerHTML = "";
+  vectors.forEach((v, i) => {
+    const lab = document.createElement("label");
+    lab.className = "vec";
+    lab.innerHTML = '<input type="checkbox" value="'+v.name+'"'+(i===0?" checked":"")+'>'
+      + '<span><span class="vlabel">'+v.label+'</span>'
+      + '<span class="vdesc">'+(v.desc||"")+'</span></span>';
+    box.appendChild(lab);
+  });
+  vectorsBuilt = true;
+}
+
+// --- panneau par vecteur en direct ---
+function renderVrows(vectors, attacks){
+  const host = $("vrows");
+  const labels = {};
+  (vectors||[]).forEach(v => labels[v.name] = v.label);
+  const names = Object.keys(attacks||{});
+  if (!names.length){ host.innerHTML = '<p class="note">Aucun vecteur actif.</p>'; return; }
+  host.innerHTML = "";
+  names.forEach(name => {
+    const a = attacks[name] || {};
+    const row = document.createElement("div");
+    row.className = "vrow";
+    const stopBtn = a.running
+      ? '<button class="vstop" data-vec="'+name+'">stop</button>' : '';
+    row.innerHTML = '<span class="vdot'+(a.running?" on":"")+'"></span>'
+      + '<span class="vname">'+(labels[name]||name)+'</span>'
+      + '<span class="vstat">envoyé <b>'+(a.sent||0)+'</b> · '
+      + 'erreurs <b class="e">'+(a.errors||0)+'</b></span>' + stopBtn;
+    host.appendChild(row);
+  });
+  host.querySelectorAll(".vstop").forEach(btn => {
+    btn.onclick = async () => {
+      await fetch("/api/attack/stop", {method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({type: btn.getAttribute("data-vec")})});
+    };
+  });
+}
 
 async function poll(){
   try{
     const s = await (await fetch("/api/status")).json();
+    if (s.vectors) buildVectors(s.vectors);
+    const totals = s.totals || {sent:s.sent, errors:s.errors, avg_latency_ms:s.avg_latency_ms, rate:0};
     $("dot").className = "dot" + (s.running ? " on" : "");
-    $("start").disabled = s.running; $("stopb").disabled = !s.running;
-    $("k-sent").textContent = s.sent;
-    $("k-err").textContent = s.errors;
-    $("k-lat").textContent = s.avg_latency_ms;
-    const last = s.history.length ? s.history[s.history.length-1] : {rate:0};
-    $("k-rate").textContent = last.rate ?? 0;
+    $("start").disabled = false; $("stopb").disabled = !s.running;
+    $("k-sent").textContent = totals.sent ?? 0;
+    $("k-err").textContent = totals.errors ?? 0;
+    $("k-lat").textContent = totals.avg_latency_ms ?? 0;
+    const hist = s.history || [];
+    const last = hist.length ? hist[hist.length-1] : {rate: totals.rate};
+    $("k-rate").textContent = (last && last.rate != null) ? last.rate : (totals.rate ?? 0);
     $("prog").style.width = s.running && s.duration ? Math.min(100, 100*s.elapsed/s.duration)+"%" : "0%";
-    $("codes").textContent = "Codes de réponse : " + (Object.keys(s.status_codes).length ?
-      Object.entries(s.status_codes).map(([k,v])=>k+": "+v).join("  ·  ") : "—");
+    const codes = s.status_codes || {};
+    $("codes").textContent = "Codes de réponse : " + (Object.keys(codes).length ?
+      Object.entries(codes).map(([k,v])=>k+": "+v).join("  ·  ") : "—");
+    renderVrows(s.vectors, s.attacks);
     if (chart) {
-      chart.data.labels = s.history.map((_,i)=>i+"s");
-      chart.data.datasets[0].data = s.history.map(h=>h.rate);
-      chart.data.datasets[1].data = s.history.map(h=>h.latency);
+      chart.data.labels = hist.map((_,i)=>i+"s");
+      chart.data.datasets[0].data = hist.map(h=>h.rate);
+      chart.data.datasets[1].data = hist.map(h=>h.latency);
       chart.update();
     }
   }catch(e){ /* cible injoignable */ }
 }
-fetch("/api/config").then(r=>r.json()).then(c=>{ $("target").textContent = c.target_url; });
+// Construit les vecteurs tôt via /api/config indisponible → on tente /api/status.
+fetch("/api/config").then(r=>r.json()).then(c=>{ $("target").textContent = c.target_url; }).catch(()=>{});
 setInterval(poll, 1000); poll();
 </script>
 </body>

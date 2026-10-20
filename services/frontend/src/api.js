@@ -89,6 +89,15 @@ export async function orchStatus() {
   } catch { return null; }
 }
 
+// Vue du cluster haute dispo (principal/secours + qui sert). Via /api (bascule nginx).
+export async function haCluster() {
+  try {
+    const r = await fetch("/api/ha/cluster", { cache: "no-store" });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
 // Première valeur scalaire d'un résultat instantané.
 export function scalar(result) {
   if (!result || !result.length) return 0;

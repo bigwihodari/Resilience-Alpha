@@ -5,6 +5,7 @@ import Payment from "./pages/Payment.jsx";
 import Cockpit from "./pages/Cockpit.jsx";
 import Assistant from "./pages/Assistant.jsx";
 import Banker from "./pages/Banker.jsx";
+import HauteDispo from "./pages/HauteDispo.jsx";
 
 function Protected({ children }) {
   return getToken() ? children : <Navigate to="/" replace />;
@@ -27,6 +28,7 @@ function NavBar() {
       <Link to={isBanker ? "/banque" : "/cockpit"} className="font-extrabold tracking-tight">RESILIENCE-ALPHA</Link>
       {isBanker && link("/banque", "Banque")}
       {link("/cockpit", "Cockpit")}
+      {link("/ha", "Haute-Dispo")}
       {!isBanker && link("/pay", "Paiement")}
       {link("/assistant", "Assistant")}
       <button
@@ -47,6 +49,7 @@ export default function App() {
         <Route path="/" element={<Login />} />
         <Route path="/banque" element={<BankerOnly><Banker /></BankerOnly>} />
         <Route path="/cockpit" element={<Protected><Cockpit /></Protected>} />
+        <Route path="/ha" element={<Protected><HauteDispo /></Protected>} />
         <Route path="/pay" element={<Protected><Payment /></Protected>} />
         <Route path="/assistant" element={<Protected><Assistant /></Protected>} />
         <Route path="*" element={<Navigate to="/" replace />} />

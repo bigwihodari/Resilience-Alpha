@@ -49,6 +49,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
       ADMIN_TOKEN: ${ADMIN_TOKEN:-orchestrator-admin-token}
       ROLE: backup
+      HA_NAME: SECOURS
       PEER_API_URL: ${PEER_API_URL:-http://host.docker.internal:8000}
       REPL_TOKEN: ${REPL_TOKEN:-repl-secret}
       REPL_INTERVAL: "2"

@@ -48,10 +48,16 @@ services:
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
       ADMIN_TOKEN: ${ADMIN_TOKEN:-orchestrator-admin-token}
       ROLE: ${ROLE:-primary}
+      HA_NAME: ${HA_NAME:-PRINCIPAL}
       REPL_TOKEN: ${REPL_TOKEN:-repl-secret}
-      # Sur un host de SECOURS (ROLE=backup), URL de l'api du principal à répliquer,
-      # ex. http://192.168.137.1:8000 (vide = principal autonome).
+      # URL de l'api du PAIR pour la haute dispo :
+      #  - sur le PRINCIPAL : URL du secours (ex. http://192.168.137.2:8000 ou,
+      #    en test local, http://host.docker.internal:8010) -> pour l'affichage cluster.
+      #  - sur un host de SECOURS (ROLE=backup) : URL du principal à répliquer.
+      # Vide = noeud autonome (pas de pair).
       PEER_API_URL: ${PEER_API_URL:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       db:
         condition: service_healthy
@@ -66,6 +72,16 @@ services:
     build: ./services/frontend
     container_name: ra-frontend
     security_opt: ["no-new-privileges:true"]
+    environment:
+      # Secours pour la bascule du cockpit. Défaut = le principal lui-même
+      # (no-op) tant qu'aucun vrai host de secours n'est renseigné -> conf valide.
+      HOST_BACKUP: ${HOST_BACKUP:-api}
+      HOST_BACKUP_API_PORT: ${HOST_BACKUP_API_PORT:-8000}
+      HOST_BACKUP_AUTH_PORT: ${HOST_BACKUP_AUTH_PORT:-8000}
+      # N'interpole QUE nos variables HOST_BACKUP* (laisse $host etc. de nginx).
+      NGINX_ENVSUBST_FILTER: "HOST_BACKUP"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - api
       - auth

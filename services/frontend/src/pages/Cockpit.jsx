@@ -22,37 +22,57 @@ function rangeToSeries(result, mul = 1) {
 export default function Cockpit() {
   const host = typeof window !== "undefined" ? window.location.hostname : "localhost";
   const [health, setHealth] = useState({});
-  const [kpi, setKpi] = useState({ reqs: 0, p95: 0, c4xx: 0, c5xx: 0 });
+  const [kpi, setKpi] = useState({ reqs: 0, authReqs: 0, apiP95: 0, p95: 0, c4xx: 0, c5xx: 0, cpu: 0, mem: 0 });
   const [reqSeries, setReqSeries] = useState([]);
   const [latSeries, setLatSeries] = useState([]);
+  const [errSeries, setErrSeries] = useState([]);
+  const [cpuSeries, setCpuSeries] = useState([]);
+  const [memSeries, setMemSeries] = useState([]);
+  const [wafSeries, setWafSeries] = useState([]);
   const [ml, setMl] = useState({ score: 0, flag: false, trained: false });
   const [anomSeries, setAnomSeries] = useState([]);
   const [rem, setRem] = useState(null);
   const timer = useRef(null);
 
   async function refresh() {
-    const [up, reqs, p95, c4xx, c5xx] = await Promise.all([
+    const [up, reqs, authReqs, apiP95, p95, c4xx, c5xx, cpu, mem] = await Promise.all([
       promInstant("up"),
       promInstant('sum(rate(http_requests_total{job="api"}[1m]))'),
+      promInstant('sum(rate(http_requests_total{job="auth"}[1m]))'),
+      promInstant('histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job="api"}[1m])) by (le))'),
       promInstant('histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job="auth"}[1m])) by (le))'),
       promInstant('sum(rate(http_requests_total{status="4xx"}[1m]))'),
       promInstant('sum(rate(http_requests_total{status="5xx"}[1m]))'),
+      promInstant('sum(rate(container_cpu_usage_seconds_total{name=~"ra-.*"}[1m]))*100'),
+      promInstant('sum(container_memory_usage_bytes{name=~"ra-.*"})/1024/1024'),
     ]);
     const h = {};
     up.forEach((s) => { h[s.metric.job] = s.value[1] === "1"; });
     setHealth(h);
     setKpi({
       reqs: Math.round(scalar(reqs) * 10) / 10,
+      authReqs: Math.round(scalar(authReqs) * 10) / 10,
+      apiP95: Math.round(scalar(apiP95) * 1000),
       p95: Math.round(scalar(p95) * 1000),
       c4xx: Math.round(scalar(c4xx) * 10) / 10,
       c5xx: Math.round(scalar(c5xx) * 10) / 10,
+      cpu: Math.round(scalar(cpu)),
+      mem: Math.round(scalar(mem)),
     });
-    const [r1, r2] = await Promise.all([
+    const [r1, r2, r3, r4, r5, r6] = await Promise.all([
       promRange('sum(rate(http_requests_total{job="auth"}[1m]))'),
       promRange('histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job="auth"}[1m])) by (le))'),
+      promRange('sum(rate(http_requests_total{status=~"4xx|5xx"}[1m]))'),
+      promRange('sum(rate(container_cpu_usage_seconds_total{name=~"ra-.*"}[1m]))*100'),
+      promRange('sum(container_memory_usage_bytes{name=~"ra-.*"})/1024/1024'),
+      promRange('sum(rate(waf_blocked_total[1m]))'),
     ]);
     setReqSeries(rangeToSeries(r1));
     setLatSeries(rangeToSeries(r2, 1000));
+    setErrSeries(rangeToSeries(r3));
+    setCpuSeries(rangeToSeries(r4));
+    setMemSeries(rangeToSeries(r5));
+    setWafSeries(rangeToSeries(r6));
 
     // Détection ML (service detector, exposé à Prometheus)
     const [anom, flag, trained, anomRange] = await Promise.all([
@@ -126,17 +146,32 @@ export default function Cockpit() {
 
       {/* KPIs */}
       <h2 className="text-sm font-bold uppercase tracking-wide text-accent mb-2">Indicateurs live</h2>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
         <Tile label="Débit API" value={kpi.reqs} unit="req/s" />
+        <Tile label="Débit auth" value={kpi.authReqs} unit="req/s" />
+        <Tile label="Latence API (p95)" value={kpi.apiP95} unit="ms" tone={kpi.apiP95 > 300 ? "text-amber-600" : "text-ink"} />
         <Tile label="Latence auth (p95)" value={kpi.p95} unit="ms" tone={kpi.p95 > 300 ? "text-amber-600" : "text-ink"} />
+      </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
         <Tile label="Erreurs 4xx" value={kpi.c4xx} unit="/s" tone={kpi.c4xx > 5 ? "text-red-600" : "text-ink"} />
         <Tile label="Erreurs 5xx" value={kpi.c5xx} unit="/s" tone={kpi.c5xx > 0 ? "text-red-600" : "text-ink"} />
+        <Tile label="CPU conteneurs" value={kpi.cpu} unit="%" tone={kpi.cpu > 150 ? "text-amber-600" : "text-ink"} />
+        <Tile label="Mémoire conteneurs" value={kpi.mem} unit="Mo" />
       </div>
 
       {/* Graphes */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
         <Chart title="Débit auth (req/s)" data={reqSeries} color="#4B3FA6" unit="req/s" />
         <Chart title="Latence auth p95 (ms)" data={latSeries} color="#B8840F" unit="ms" />
+      </div>
+
+      {/* Ressources & sécurité */}
+      <h2 className="text-sm font-bold uppercase tracking-wide text-accent mb-2">Ressources & trafic</h2>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+        <Chart title="Erreurs HTTP 4xx+5xx (/s)" data={errSeries} color="#C2413C" unit="/s" />
+        <Chart title="Requêtes bloquées WAF (/s)" data={wafSeries} color="#9333EA" unit="/s" />
+        <Chart title="CPU conteneurs (%)" data={cpuSeries} color="#1E8E6A" unit="%" />
+        <Chart title="Mémoire conteneurs (Mo)" data={memSeries} color="#2563EB" unit="Mo" />
       </div>
 
       {/* Détection par IA (P4) */}

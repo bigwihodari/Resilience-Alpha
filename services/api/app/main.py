@@ -14,7 +14,7 @@ import datetime as dt
 
 import jwt
 import requests
-from fastapi import FastAPI, HTTPException, Depends, Header, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Depends, Header, Body, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from sqlalchemy import (
     create_engine, Integer, String, Numeric, ForeignKey, DateTime, func, select, text,
@@ -31,11 +31,22 @@ ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "orchestrator-admin-token")
 
 # Réplication / haute disponibilité
 ROLE = os.environ.get("ROLE", "primary")              # primary | backup
-PEER_API_URL = os.environ.get("PEER_API_URL", "")     # backup : URL de l'api du principal
+PEER_API_URL = os.environ.get("PEER_API_URL", "")     # URL de l'api du pair (principal<->secours)
 REPL_TOKEN = os.environ.get("REPL_TOKEN", "repl-secret")
 REPL_INTERVAL = float(os.environ.get("REPL_INTERVAL", "2"))
-repl_state = {"role": ROLE, "promoted": ROLE == "primary", "peer": PEER_API_URL,
-              "last_sync": None, "fails": 0}
+HA_NAME = os.environ.get("HA_NAME", "PRINCIPAL" if ROLE == "primary" else "SECOURS")
+FAIL_PROMOTE = int(os.environ.get("FAIL_PROMOTE", "3"))       # échecs avant promotion du secours
+FAILBACK_CONFIRM = int(os.environ.get("FAILBACK_CONFIRM", "3"))  # cycles OK avant retour au principal
+repl_state = {"role": ROLE, "name": HA_NAME, "promoted": ROLE == "primary", "peer": PEER_API_URL,
+              "last_sync": None, "fails": 0, "events": []}
+
+
+def ha_event(label, kind="info"):
+    """Trace un événement de bascule (visible dans le cockpit Haute-Dispo)."""
+    t = dt.datetime.now().strftime("%H:%M:%S")
+    repl_state["events"].append({"t": t, "label": label, "kind": kind})
+    repl_state["events"] = repl_state["events"][-40:]
+    print(f"[ha] {label}", flush=True)
 
 # --- WAF applicatif (signatures type OWASP) ---
 WAF_BLOCKED = Counter("waf_blocked_total", "Requêtes bloquées par le WAF applicatif", ["rule"])
@@ -440,11 +451,8 @@ def repl_status():
     return repl_state
 
 
-@app.get("/repl/dump")
-def repl_dump(x_repl_token: str = Header(default=None)):
-    """État à répliquer (lu par le backup). Protégé par un token interne."""
-    if x_repl_token != REPL_TOKEN:
-        raise HTTPException(403, "forbidden")
+def _local_dump():
+    """Snapshot de l'état local (utilisateurs, soldes, transactions idempotentes)."""
     with Session(engine()) as s:
         users = s.scalars(select(User)).all()
         accounts = s.scalars(select(Account)).all()
@@ -464,6 +472,76 @@ def repl_dump(x_repl_token: str = Header(default=None)):
         "accounts": out_accounts,
         "transactions": out_tx,
     }
+
+
+@app.get("/repl/dump")
+def repl_dump(x_repl_token: str = Header(default=None)):
+    """État à répliquer (lu par le secours). Protégé par un token interne."""
+    if x_repl_token != REPL_TOKEN:
+        raise HTTPException(403, "forbidden")
+    return _local_dump()
+
+
+@app.post("/repl/restore")
+def repl_restore(data: dict = Body(...), x_repl_token: str = Header(default=None)):
+    """Réconciliation : le secours pousse son état au principal qui revient (failback)."""
+    if x_repl_token != REPL_TOKEN:
+        raise HTTPException(403, "forbidden")
+    apply_dump(data)
+    ha_event("État reçu du secours et appliqué — réconciliation après panne", "action")
+    return {"restored": True}
+
+
+def _peer_status():
+    """État du pair (principal<->secours), ou injoignable."""
+    if not PEER_API_URL:
+        return {"reachable": False}
+    try:
+        r = requests.get(f"{PEER_API_URL}/repl/status", timeout=2)
+        if r.status_code == 200:
+            d = r.json()
+            d["reachable"] = True
+            return d
+    except Exception:  # noqa: BLE001
+        pass
+    return {"reachable": False}
+
+
+@app.get("/ha/cluster")
+def ha_cluster():
+    """Vue du cluster HA : les deux noeuds + qui fait autorité (pour le cockpit).
+
+    Répond quel que soit le noeud joint (le principal normalement ; le secours si
+    nginx a basculé). On reconstruit toujours les deux cartes PRINCIPAL/SECOURS.
+    """
+    me = dict(repl_state)
+    me["reachable"] = True
+    peer = _peer_status()
+    peer_role_cfg = "backup" if ROLE == "primary" else "primary"
+    nodes = {
+        ROLE: {"name": me["name"], "role_cfg": ROLE, "promoted": me.get("promoted"),
+               "reachable": True, "last_sync": me.get("last_sync"), "fails": me.get("fails", 0),
+               "events": me.get("events", [])},
+        peer_role_cfg: {"name": peer.get("name") or ("SECOURS" if ROLE == "primary" else "PRINCIPAL"),
+                        "role_cfg": peer_role_cfg, "promoted": peer.get("promoted"),
+                        "reachable": peer.get("reachable", False),
+                        "last_sync": peer.get("last_sync"), "fails": peer.get("fails", 0),
+                        "events": peer.get("events", [])},
+    }
+    principal = nodes["primary"]
+    secours = nodes["backup"]
+    if principal["reachable"] and principal.get("promoted"):
+        serving = principal["name"]
+    elif secours["reachable"] and secours.get("promoted"):
+        serving = secours["name"]
+    elif principal["reachable"]:
+        serving = principal["name"]
+    elif secours["reachable"]:
+        serving = secours["name"]
+    else:
+        serving = None
+    return {"principal": principal, "secours": secours,
+            "serving": serving, "answered_by": me["name"]}
 
 
 def apply_dump(data):
@@ -501,30 +579,75 @@ def apply_dump(data):
         s.commit()
 
 
+def push_state_to_primary():
+    """Pousse l'état courant du secours vers le principal qui revient (failback)."""
+    try:
+        data = _local_dump()
+        r = requests.post(f"{PEER_API_URL}/repl/restore", json=data,
+                          headers={"X-Repl-Token": REPL_TOKEN}, timeout=8)
+        return r.status_code == 200
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def replicate_loop():
-    """Backup : réplique l'état du principal. Après plusieurs échecs consécutifs,
-    se promeut (devient autoritaire) et cesse de répliquer pour ne pas écraser ses
-    propres transactions post-bascule."""
-    print(f"[repl] backup : réplication depuis {PEER_API_URL}", flush=True)
+    """Secours : boucle de haute disponibilité (bascule ET retour automatiques).
+
+    - Mode réplication : copie l'état du principal toutes les REPL_INTERVAL s.
+      Après FAIL_PROMOTE échecs consécutifs -> PROMOTION (le secours devient actif).
+    - Mode promu : surveille le retour du principal. Dès qu'il répond de nouveau
+      (FAILBACK_CONFIRM cycles), le secours lui REJOUE son état (aucune transaction
+      perdue) puis REPASSE en réplication -> le principal reprend la main.
+    """
+    ha_event("Secours en ligne — réplication depuis le principal", "info")
+    recover = 0
     while True:
         time.sleep(REPL_INTERVAL)
-        if repl_state["promoted"]:
-            return
-        try:
-            r = requests.get(f"{PEER_API_URL}/repl/dump", headers={"X-Repl-Token": REPL_TOKEN}, timeout=4)
-            if r.status_code == 200:
-                apply_dump(r.json())
-                repl_state["last_sync"] = time.time()
-                repl_state["fails"] = 0
-            else:
+        if not repl_state["promoted"]:
+            try:
+                r = requests.get(f"{PEER_API_URL}/repl/dump",
+                                 headers={"X-Repl-Token": REPL_TOKEN}, timeout=4)
+                if r.status_code == 200:
+                    apply_dump(r.json())
+                    repl_state["last_sync"] = time.time()
+                    if repl_state["fails"] > 0:
+                        ha_event("Principal de nouveau joignable — réplication rétablie", "success")
+                    repl_state["fails"] = 0
+                else:
+                    repl_state["fails"] += 1
+            except Exception:  # noqa: BLE001
                 repl_state["fails"] += 1
-        except Exception:
-            repl_state["fails"] += 1
-        if repl_state["fails"] >= 3 and not repl_state["promoted"]:
-            repl_state["promoted"] = True
-            repl_state["role"] = "primary (promu)"
-            print("[repl] principal injoignable -> PROMOTION du backup (autoritaire)", flush=True)
-            return
+            if repl_state["fails"] >= FAIL_PROMOTE and not repl_state["promoted"]:
+                repl_state["promoted"] = True
+                repl_state["role"] = "primary (promu)"
+                recover = 0
+                ha_event(f"Principal injoignable ({FAIL_PROMOTE} échecs) — PROMOTION : "
+                         f"le secours devient actif", "alert")
+        else:
+            healthy = False
+            try:
+                r = requests.get(f"{PEER_API_URL}/health", timeout=3)
+                healthy = (r.status_code == 200)
+            except Exception:  # noqa: BLE001
+                healthy = False
+            if healthy:
+                recover += 1
+                if recover == 1:
+                    ha_event("Principal détecté de nouveau en ligne — préparation du retour…", "info")
+                if recover >= FAILBACK_CONFIRM:
+                    if push_state_to_primary():
+                        ha_event("État répliqué vers le principal (aucune transaction perdue)", "action")
+                        repl_state["promoted"] = False
+                        repl_state["role"] = ROLE
+                        repl_state["fails"] = 0
+                        recover = 0
+                        ha_event("RETOUR : le principal reprend la main, le secours "
+                                 "repasse en réplication", "success")
+                    else:
+                        ha_event("Réconciliation échouée — le secours reste actif, nouvel essai", "error")
+                        recover = 0
+            else:
+                recover = 0
 
 
 Instrumentator().instrument(app).expose(app)

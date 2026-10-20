@@ -41,14 +41,25 @@ def status():
 
 @app.post("/api/attack/start")
 def attack_start(body: dict = Body(default={})):
-    ok = ctrl.start(body.get("type", "dos"), body.get("intensity", 10), body.get("duration", 60))
-    return {"started": ok, **ctrl.status()}
+    # `types` (liste) a priorité, sinon `type` (str), sinon défaut ["dos_auth"].
+    types = body.get("types")
+    if not types:
+        single = body.get("type")
+        types = [single] if single else ["dos_auth"]
+    started = ctrl.start(types, body.get("intensity", 10), body.get("duration", 60))
+    return {"started": started, **ctrl.status()}
+
+
+@app.post("/api/attack/start_all")
+def attack_start_all(body: dict = Body(default={})):
+    started = ctrl.start_all(body.get("intensity", 10), body.get("duration", 60))
+    return {"started": started, **ctrl.status()}
 
 
 @app.post("/api/attack/stop")
-def attack_stop():
-    ctrl.stop()
-    return {"stopped": True, **ctrl.status()}
+def attack_stop(body: dict = Body(default={})):
+    stopped = ctrl.stop(body.get("type"))
+    return {"stopped": stopped, **ctrl.status()}
 
 
 @app.get("/metrics")
@@ -57,6 +68,7 @@ def metrics():
     lines = [
         "# HELP attacker_requests_sent Requêtes envoyées vers la cible",
         "# TYPE attacker_requests_sent counter",
+        # Agrégats (Prometheus/Grafana continuent de fonctionner).
         f"attacker_requests_sent {st['sent']}",
         f"attacker_errors {st['errors']}",
         f"attacker_refused {st['refused']}",
@@ -64,4 +76,14 @@ def metrics():
         f"attacker_avg_latency_ms {st['avg_latency_ms']}",
         f"attacker_running {1 if st['running'] else 0}",
     ]
+    # Jauges par vecteur, avec un label `vector="..."`.
+    lines.append("# HELP attacker_vector_sent Requêtes envoyées par vecteur")
+    lines.append("# TYPE attacker_vector_sent counter")
+    for name, a in st.get("attacks", {}).items():
+        lines.append(f'attacker_vector_sent{{vector="{name}"}} {a["sent"]}')
+        lines.append(f'attacker_vector_errors{{vector="{name}"}} {a["errors"]}')
+        lines.append(f'attacker_vector_refused{{vector="{name}"}} {a["refused"]}')
+        lines.append(f'attacker_vector_ok{{vector="{name}"}} {a["ok"]}')
+        lines.append(f'attacker_vector_avg_latency_ms{{vector="{name}"}} {a["avg_latency_ms"]}')
+        lines.append(f'attacker_vector_running{{vector="{name}"}} {1 if a["running"] else 0}')
     return Response("\n".join(lines) + "\n", media_type="text/plain")
