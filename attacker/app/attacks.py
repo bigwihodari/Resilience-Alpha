@@ -439,6 +439,8 @@ class GameController:
     def __init__(self, target_url: str, attacks: "AttackController"):
         self.target = target_url.rstrip("/")
         self.attacks = attacks
+        # Identité de l'attaquant (en-tete X-Player) : permet le multi-attaquant / PvP.
+        self.name = os.environ.get("ATTACKER_NAME", "attaquant")
         self.lock = threading.Lock()
         self.tips_revealed = 1                       # 1re astuce visible d'emblée
         self.next_tip_at = time.time() + TIP_INTERVAL
@@ -452,6 +454,10 @@ class GameController:
         with self.lock:
             self.log.append({"t": time.strftime("%H:%M:%S"), "msg": msg, "kind": kind})
 
+    def _h(self):
+        """En-tete d'identite attaquant (X-Player) envoye a la cible."""
+        return {"X-Player": self.name}
+
     def _reveal_next(self):
         with self.lock:
             if self.tips_revealed < len(TIPS):
@@ -460,7 +466,7 @@ class GameController:
 
     def _fetch_target(self):
         try:
-            r = requests.get(f"{self.target}/api/game/state", timeout=4)
+            r = requests.get(f"{self.target}/api/game/state", headers=self._h(), timeout=4)
             if r.status_code == 200:
                 self.last_target = r.json()
         except Exception:
@@ -481,7 +487,7 @@ class GameController:
             self._event("Sonde refusée — attaquant bloqué (cooldown en cours).", "error")
             return {"blocked": True, **self.state()}
         try:
-            r = requests.post(f"{self.target}/api/game/recon", timeout=6)
+            r = requests.post(f"{self.target}/api/game/recon", headers=self._h(), timeout=6)
         except Exception as e:  # noqa: BLE001
             self._event(f"Sonde échouée : {e}", "error")
             return {"error": str(e), **self.state()}
@@ -499,7 +505,7 @@ class GameController:
         if not name:
             return {"error": "cible vide", **self.state()}
         try:
-            r = requests.post(f"{self.target}/api/game/target", json={"username": name}, timeout=6)
+            r = requests.post(f"{self.target}/api/game/target", json={"username": name}, headers=self._h(), timeout=6)
         except Exception as e:  # noqa: BLE001
             self._event(f"Changement de cible échoué : {e}", "error")
             return {"error": str(e), **self.state()}
@@ -516,7 +522,7 @@ class GameController:
             return {"blocked": True, **self.state()}
         try:
             r = requests.post(f"{self.target}/api/game/heist",
-                              json={"amount": amount, "source": source}, timeout=6)
+                              json={"amount": amount, "source": source}, headers=self._h(), timeout=6)
         except Exception as e:  # noqa: BLE001
             self._event(f"Retrait échoué : {e}", "error")
             return {"error": str(e), **self.state()}
@@ -529,6 +535,82 @@ class GameController:
         self._event(f"Retrait refusé : {self._detail(r)}", "error")
         return {"refused": True, "detail": self._detail(r), **self.state()}
 
+    def _get(self, path):
+        try:
+            r = requests.get(f"{self.target}{path}", headers=self._h(), timeout=5)
+            return r.json() if r.status_code == 200 else {"error": self._detail(r)}
+        except Exception as e:  # noqa: BLE001
+            return {"error": str(e)}
+
+    def suspicion(self):
+        """Niveau de suspicion (heat) par acteur, vu par l'IA de la cible."""
+        return self._get("/api/game/suspicion")
+
+    def shop(self):
+        """Catalogue du shop hacker (furtivite, proxy, outils)."""
+        return self._get("/api/game/shop")
+
+    def buy(self, ukey):
+        try:
+            r = requests.post(f"{self.target}/api/game/shop/buy", json={"ukey": ukey},
+                              headers=self._h(), timeout=6)
+        except Exception as e:  # noqa: BLE001
+            return {"error": str(e)}
+        if r.status_code == 200:
+            self._event(f"🛠 Upgrade hacker acheté : {ukey}", "success")
+            return r.json()
+        self._event(f"Achat refusé : {self._detail(r)}", "error")
+        return {"error": self._detail(r)}
+
+    def intel_offers(self):
+        """Offres d'info vendues par le banquier (insider)."""
+        return self._get("/api/intel/offers")
+
+    def buy_intel(self, offer_id):
+        try:
+            r = requests.post(f"{self.target}/api/intel/offers/{offer_id}/buy",
+                              headers=self._h(), timeout=6)
+        except Exception as e:  # noqa: BLE001
+            return {"error": str(e)}
+        if r.status_code == 200:
+            self.last_target = r.json() if isinstance(r.json(), dict) and "victim" in r.json() else self.last_target
+            self._event("🕵️ Info achetée au banquier (recon facilitée).", "success")
+            return r.json()
+        self._event(f"Achat d'info refusé : {self._detail(r)}", "error")
+        return {"error": self._detail(r)}
+
+    def phishing(self, title, item_value, min_bid, lure, targets):
+        payload = {"title": title, "item_value": item_value, "min_bid": min_bid,
+                   "lure": lure, "targets": targets or []}
+        try:
+            r = requests.post(f"{self.target}/api/game/phishing", json=payload,
+                              headers=self._h(), timeout=6)
+        except Exception as e:  # noqa: BLE001
+            return {"error": str(e)}
+        if r.status_code == 200:
+            d = r.json()
+            self._event(f"🎣 Campagne de phishing lancée ({d.get('count', 0)} cible(s)).", "success")
+            return d
+        self._event(f"Phishing refusé : {self._detail(r)}", "error")
+        return {"error": self._detail(r)}
+
+    def phishing_list(self):
+        return self._get("/api/game/phishing")
+
+    def phishing_close(self, campaign_id):
+        try:
+            r = requests.post(f"{self.target}/api/game/phishing/{campaign_id}/close",
+                              headers=self._h(), timeout=8)
+        except Exception as e:  # noqa: BLE001
+            return {"error": str(e)}
+        if r.status_code == 200:
+            d = r.json()
+            self.last_target = d if isinstance(d, dict) and "victim" in d else self.last_target
+            self._event(f"🎣 Campagne clôturée — volé {d.get('stolen', 0):.0f}€.", "success")
+            return d
+        self._event(f"Clôture phishing refusée : {self._detail(r)}", "error")
+        return {"error": self._detail(r)}
+
     def state(self):
         st = self.last_target or {}
         now = time.time()
@@ -539,6 +621,7 @@ class GameController:
         all_done = revealed >= len(TIPS)
         recon_count = st.get("recon_count", 0)
         return {
+            "me": self.name,
             "tips": TIPS[:revealed],
             "tips_revealed": revealed,
             "tips_total": len(TIPS),

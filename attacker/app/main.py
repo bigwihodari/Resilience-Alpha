@@ -93,6 +93,47 @@ def game_target(body: dict = Body(default={})):
     return game.set_target(body.get("username", ""))
 
 
+@app.get("/api/game/suspicion")
+def game_suspicion():
+    return game.suspicion()
+
+
+@app.get("/api/game/shop")
+def game_shop():
+    return game.shop()
+
+
+@app.post("/api/game/shop/buy")
+def game_shop_buy(body: dict = Body(default={})):
+    return game.buy(body.get("ukey", ""))
+
+
+@app.get("/api/intel/offers")
+def intel_offers():
+    return game.intel_offers()
+
+
+@app.post("/api/intel/offers/{offer_id}/buy")
+def intel_buy(offer_id: int):
+    return game.buy_intel(offer_id)
+
+
+@app.get("/api/game/phishing")
+def phishing_list():
+    return game.phishing_list()
+
+
+@app.post("/api/game/phishing")
+def phishing_create(body: dict = Body(default={})):
+    return game.phishing(body.get("title", "Enchere exceptionnelle"), body.get("item_value", 5000),
+                         body.get("min_bid", 100), body.get("lure", ""), body.get("targets", []))
+
+
+@app.post("/api/game/phishing/{campaign_id}/close")
+def phishing_close(campaign_id: int):
+    return game.phishing_close(campaign_id)
+
+
 @app.post("/api/attack/stop")
 def attack_stop(body: dict = Body(default={})):
     stopped = ctrl.stop(body.get("type"))

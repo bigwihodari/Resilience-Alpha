@@ -246,6 +246,44 @@
       <div class="glog" id="g-log"></div>
     </div>
   </div>
+
+  <!-- ============ OUTILS HACKER : heat, shop, intel, phishing ============ -->
+  <div class="panel" id="toolzone" style="margin-top:16px">
+    <h2>🧰 Outils hacker <span class="note" style="margin:0;text-transform:none;letter-spacing:0">— pseudo : <b id="tz-me" style="color:var(--accent)">attaquant</b></span></h2>
+
+    <!-- Jauge de suspicion / heat -->
+    <div style="margin-bottom:6px;display:flex;align-items:center;gap:10px">
+      <span style="font-size:12px;color:var(--muted)">🔥 Suspicion de l'IA (reste discret !)</span>
+      <span class="val" id="tz-heat" style="float:none;margin-left:auto">0 %</span>
+    </div>
+    <div class="bar" style="height:10px"><i id="tz-heatbar" style="background:linear-gradient(90deg,#3BD671,#E7B53C,#E5484D)"></i></div>
+    <div class="note" id="tz-heatinfo">Proba de blocage au prochain coup : 0 %</div>
+
+    <div class="gamegrid" style="margin-top:14px">
+      <!-- Shop hacker -->
+      <div class="sub">
+        <h3>🛠 Shop hacker (payé avec le butin)</h3>
+        <div id="tz-shop" class="vrows"><p class="note">Chargement…</p></div>
+      </div>
+      <!-- Intel + Phishing -->
+      <div class="sub">
+        <h3>🕵️ Info du banquier (insider)</h3>
+        <div id="tz-intel" class="vrows"><p class="note">Aucune offre pour l'instant.</p></div>
+
+        <h3 style="margin-top:14px">🎣 Campagne de phishing</h3>
+        <div class="heistrow" style="flex-direction:column;gap:6px">
+          <input id="ph-title" placeholder="Titre de la fausse enchère (ex: iPhone -90%)" />
+          <div style="display:flex;gap:6px">
+            <input id="ph-val" type="number" placeholder="valeur affichée €" value="5000" />
+            <input id="ph-min" type="number" placeholder="mise min €" value="100" />
+          </div>
+          <input id="ph-targets" placeholder="cibles (ex: alice,bob) — vide = tous" />
+          <button class="gbtn vol" id="ph-send">🎣 Envoyer la campagne</button>
+        </div>
+        <div id="tz-phish" class="vrows" style="margin-top:8px"></div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -479,6 +517,90 @@ async function pollGame(){
   catch(e){ /* cible / console injoignable */ }
 }
 setInterval(pollGame, 1000); pollGame();
+
+// ================= OUTILS HACKER : heat / shop / intel / phishing =================
+let MYNAME = "attaquant";
+const _origRender = renderGame;
+renderGame = function(s){ try { if (s && s.me){ MYNAME = s.me; $("tz-me").textContent = s.me; } } catch(e){} return _origRender(s); };
+
+async function pollHeat(){
+  try{
+    const sus = await (await fetch("/api/game/suspicion")).json();
+    const mine = (sus.actors||[]).find(a=>a.actor===MYNAME) || {score:0,p_block:0,blocked:false};
+    const pct = Math.round((mine.score||0)*100);
+    $("tz-heat").textContent = pct+" %";
+    $("tz-heatbar").style.width = Math.max(3,pct)+"%";
+    $("tz-heatinfo").textContent = "Proba de blocage au prochain coup : "+Math.round((mine.p_block||0)*100)+" %"+(mine.blocked?" — ⛔ BLOQUÉ":"");
+  }catch(e){}
+}
+setInterval(pollHeat, 1500); pollHeat();
+
+async function loadShop(){
+  try{
+    const sh = await (await fetch("/api/game/shop")).json();
+    const box=$("tz-shop"); const items=sh.items||[];
+    if(!items.length){ box.innerHTML='<p class="note">Aucun upgrade disponible.</p>'; return; }
+    box.innerHTML="";
+    items.forEach(it=>{
+      const row=document.createElement("div"); row.className="vrow";
+      row.innerHTML='<span class="vname">'+it.label+' <span class="vstat">niv '+(it.level||0)+'</span></span>'
+        +'<button class="vstop" data-k="'+it.ukey+'">'+Math.round(it.next_cost||0)+'€</button>';
+      box.appendChild(row);
+    });
+    box.querySelectorAll(".vstop").forEach(b=>b.onclick=async()=>{
+      await fetch("/api/game/shop/buy",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ukey:b.getAttribute("data-k")})});
+      loadShop(); pollGame();
+    });
+  }catch(e){}
+}
+setInterval(loadShop, 4000); loadShop();
+
+async function loadIntel(){
+  try{
+    const io = await (await fetch("/api/intel/offers")).json();
+    const box=$("tz-intel"); const offers=io.offers||[];
+    if(!offers.length){ box.innerHTML='<p class="note">Aucune offre du banquier.</p>'; return; }
+    box.innerHTML="";
+    offers.forEach(o=>{
+      const row=document.createElement("div"); row.className="vrow";
+      row.innerHTML='<span class="vname">cible <b>'+o.target+'</b></span>'
+        +(o.sold?'<span class="vstat">achetée</span>':'<button class="vstop" data-id="'+o.id+'">'+Math.round(o.price)+'€</button>');
+      box.appendChild(row);
+    });
+    box.querySelectorAll(".vstop").forEach(b=>b.onclick=async()=>{
+      await fetch("/api/intel/offers/"+b.getAttribute("data-id")+"/buy",{method:"POST"});
+      loadIntel(); pollGame();
+    });
+  }catch(e){}
+}
+setInterval(loadIntel, 4000); loadIntel();
+
+$("ph-send").onclick=async()=>{
+  const targets=$("ph-targets").value.split(",").map(s=>s.trim()).filter(Boolean);
+  await fetch("/api/game/phishing",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({title:$("ph-title").value||"Enchere exceptionnelle", item_value:+$("ph-val").value||5000, min_bid:+$("ph-min").value||100, targets})});
+  loadPhish();
+};
+async function loadPhish(){
+  try{
+    const data = await (await fetch("/api/game/phishing")).json();
+    const list = Array.isArray(data) ? data : (data.campaigns || []);
+    const box=$("tz-phish");
+    if(!list.length){ box.innerHTML=""; return; }
+    box.innerHTML="";
+    list.forEach(c=>{
+      const row=document.createElement("div"); row.className="vrow";
+      row.innerHTML='<span class="vname">'+(c.title||"campagne")+' <span class="vstat">'+(c.biters||0)+' mordu(s)</span></span>'
+        +(c.status==="open"?'<button class="vstop" data-id="'+c.id+'">clôturer &amp; voler</button>':'<span class="vstat">volé '+Math.round(c.stolen||0)+'€</span>');
+      box.appendChild(row);
+    });
+    box.querySelectorAll(".vstop").forEach(b=>b.onclick=async()=>{
+      await fetch("/api/game/phishing/"+b.getAttribute("data-id")+"/close",{method:"POST"});
+      loadPhish(); pollGame();
+    });
+  }catch(e){}
+}
+setInterval(loadPhish, 4000); loadPhish();
 </script>
 </body>
 </html>
