@@ -227,11 +227,12 @@ def loop():
             state["cooldown_remaining"] = float(g.get("cooldown_remaining", 0) or 0)
             comp = state["compromise"]
 
-        # Signaux de compromission : butin trop gros, OU exploitation + anomalie ML
-        # (attaque trop forte), OU énumération/retraits trop rapides (motif suspect).
-        exploiting = heist_count > 0 or loot > 0 or recon_rate > 0
+        # Signaux de compromission : butin trop gros, OU attaque trop forte PENDANT
+        # un vol en cours (butin en main), OU énumération/retraits trop rapides.
+        # NB : on exige loot>0 pour la voie ML — une simple sonde (recon_rate>0
+        # pendant 60s) ne doit PAS armer un blocage au repos si le score ML dérive.
         trigger = (loot >= GAME_LOOT_ALERT
-                   or (is_anom and exploiting)
+                   or (is_anom and loot > 0)
                    or recon_rate > GAME_RECON_RATE_ALERT
                    or heist_rate > GAME_HEIST_RATE_ALERT)
 
