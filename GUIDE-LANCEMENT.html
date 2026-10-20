@@ -179,7 +179,7 @@ TARGET_HOST=192.168.137.1</pre></div></div>
     <tr><td><code>port is already allocated</code></td><td>Un logiciel occupe le port → changez-le dans <code>.env</code> puis <code>.\update.ps1</code>.</td></tr>
     <tr><td>Page lente au 1er chargement</td><td>Attendez 15-20 s puis rafraîchissez.</td></tr>
     <tr><td>Repartir de zéro</td><td><code>docker compose down -v</code> puis <code>.\start.ps1</code>.</td></tr>
-    <tr><td>Assistant IA muet</td><td>Ollama doit tourner sur le PC Hôte avec <code>qwen3:8b</code>.</td></tr>
+    <tr><td>Assistant IA muet</td><td>Ollama doit tourner sur le PC Hôte avec <code>qwen2.5:7b-instruct-q4_K_M</code> (<code>ollama pull qwen2.5:7b-instruct-q4_K_M</code> + <code>ollama pull nomic-embed-text</code>).</td></tr>
   </table>
 
   <footer>

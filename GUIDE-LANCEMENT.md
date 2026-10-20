@@ -164,7 +164,7 @@ Mettre à jour : `.\update.ps1` · Arrêter : `.\stop.ps1`
 | « port is already allocated » | Un autre logiciel occupe le port. Changez-le dans `.env` (voir §7 de DEPLOIEMENT.md) puis `.\update.ps1`. |
 | Première page lente à charger | Attendez 15-20 s que les conteneurs démarrent, puis rafraîchissez. |
 | Repartir de zéro sur un PC | `docker compose down -v` puis `.\start.ps1`. |
-| L'assistant IA ne répond pas | Ollama doit tourner sur le PC Hôte (`ollama serve`) avec le modèle `qwen3:8b`. |
+| L'assistant IA ne répond pas | Ollama doit tourner sur le PC Hôte avec `qwen2.5:7b-instruct-q4_K_M` (`ollama pull qwen2.5:7b-instruct-q4_K_M` + `ollama pull nomic-embed-text`). |
 
 ---
 

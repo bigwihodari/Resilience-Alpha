@@ -20,7 +20,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 
 OLLAMA = os.environ.get("OLLAMA_BASE_URL", "http://host.docker.internal:11434")
-LLM_MODEL = os.environ.get("LLM_MODEL", "qwen3:8b")
+LLM_MODEL = os.environ.get("LLM_MODEL", "qwen2.5:7b-instruct-q4_K_M")
 EMB_MODEL = os.environ.get("EMB_MODEL", "nomic-embed-text")
 KNOWLEDGE = os.environ.get("KNOWLEDGE_DIR", "/app/knowledge")
 
@@ -73,7 +73,7 @@ def _init():
 
 
 def clean(text: str) -> str:
-    # certains modèles (qwen3) émettent un bloc de raisonnement <think>…</think>
+    # certains modèles emettent un bloc de raisonnement <think>…</think> : on le retire
     return re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()
 
 
