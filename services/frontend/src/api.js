@@ -102,6 +102,23 @@ export async function haCluster() {
   } catch { return null; }
 }
 
+// ---- Jeu : leaderboard, managers banquier (enchères/quiz/intel), suspicion ----
+export const leaderboard = () => req("/api/leaderboard");
+export const bankAuctions = () => req("/api/bank/auctions");
+export const createAuction = (title, item_value, min_bid) =>
+  req("/api/bank/auctions", { method: "POST", body: JSON.stringify({ title, item_value, min_bid }) });
+export const closeAuction = (id) => req(`/api/bank/auctions/${id}/close`, { method: "POST" });
+export const bankQuizzes = () => req("/api/bank/quizzes");
+export const createQuiz = (question, answer, prize) =>
+  req("/api/bank/quizzes", { method: "POST", body: JSON.stringify({ question, answer, prize }) });
+export const bankIntelOffers = () => req("/api/bank/intel/offers");
+export const createIntelOffer = (target, price) =>
+  req("/api/bank/intel/offer", { method: "POST", body: JSON.stringify({ target, price }) });
+export async function gameSuspicion() {
+  try { const r = await fetch("/api/game/suspicion", { cache: "no-store" }); if (!r.ok) return null; return r.json(); }
+  catch { return null; }
+}
+
 // Première valeur scalaire d'un résultat instantané.
 export function scalar(result) {
   if (!result || !result.length) return 0;

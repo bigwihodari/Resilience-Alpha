@@ -6,6 +6,7 @@ import Cockpit from "./pages/Cockpit.jsx";
 import Assistant from "./pages/Assistant.jsx";
 import Banker from "./pages/Banker.jsx";
 import HauteDispo from "./pages/HauteDispo.jsx";
+import GameAdmin from "./pages/GameAdmin.jsx";
 
 function Protected({ children }) {
   return getToken() ? children : <Navigate to="/" replace />;
@@ -27,6 +28,7 @@ function NavBar() {
     <nav className="bg-ink text-white px-5 py-3 flex items-center gap-6 shadow">
       <Link to={isBanker ? "/banque" : "/cockpit"} className="font-extrabold tracking-tight">RESILIENCE-ALPHA</Link>
       {isBanker && link("/banque", "Banque")}
+      {isBanker && link("/jeu", "Jeu")}
       {link("/cockpit", "Cockpit")}
       {link("/ha", "Haute-Dispo")}
       {!isBanker && link("/pay", "Paiement")}
@@ -48,6 +50,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Login />} />
         <Route path="/banque" element={<BankerOnly><Banker /></BankerOnly>} />
+        <Route path="/jeu" element={<BankerOnly><GameAdmin /></BankerOnly>} />
         <Route path="/cockpit" element={<Protected><Cockpit /></Protected>} />
         <Route path="/ha" element={<Protected><HauteDispo /></Protected>} />
         <Route path="/pay" element={<Protected><Payment /></Protected>} />
