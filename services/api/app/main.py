@@ -890,9 +890,9 @@ def game_reset(x_admin_token: str = Header(default=None)):
     if x_admin_token != ADMIN_TOKEN:
         raise HTTPException(403, "forbidden")
     with game_lock:
-        game_state.update({"loot": 0.0, "loot_neutralized": 0.0, "exfiltrated_total": 0.0,
-                           "recon_count": 0, "heist_count": 0, "intel": [], "discovered": [],
-                           "blocked_until": 0.0, "block_reason": ""})
+        game_state.update({"victim": GAME_VICTIM, "loot": 0.0, "loot_neutralized": 0.0,
+                           "exfiltrated_total": 0.0, "recon_count": 0, "heist_count": 0,
+                           "intel": [], "discovered": [], "blocked_until": 0.0, "block_reason": ""})
     GAME_LOOT.set(0)
     GAME_BLOCKED.set(0)
     return _game_public()
