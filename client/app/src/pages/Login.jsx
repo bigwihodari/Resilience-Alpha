@@ -17,7 +17,7 @@ export default function Login() {
       if (mode === "register") await register(username, password);
       const r = await login(username, password);
       setSession(r.access_token, username);
-      nav("/pay");
+      nav("/dashboard");
     } catch (e) {
       setErr(e.message || "Échec");
     } finally { setLoading(false); }
