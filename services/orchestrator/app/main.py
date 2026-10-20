@@ -252,6 +252,9 @@ def loop():
             # 3) Protéger l'argent : restaurer le butin (secours sain / intégrité)
             cb = game_admin("/game/admin/clawback")
             restored = (cb or {}).get("restored", 0)
+            with lock:
+                state["loot_neutralized"] = float((cb or {}).get("loot_neutralized", state["loot_neutralized"]))
+                state["loot"] = float((cb or {}).get("loot", 0))
             add_event(f"Butin neutralisé ({restored:.0f}€ restaurés) — l'argent volé ne 'gagne' pas", "success")
             # 4) Prouver que le service reste utilisable
             ok, lat, detail = run_canary_record()

@@ -182,6 +182,24 @@
   le principal reprend la main. Deux niveaux combinés : auto-réparation (remédiation) si le
   principal peut se soigner, bascule si l'hôte crashe — c'est précisément ce que l'attaquant
   provoque en lançant ses 7 vecteurs d'un coup pour faire tomber le principal.</p>
+
+  <h3>Scénario « jeu de hacker » : détection de compromission → blocage → bascule</h3>
+  <p>Une zone <b>« Reconnaissance / Opération »</b> ajoutée à la console attaquant transforme la
+  démo en jeu d'équilibre. L'API expose des chemins <b>exploitables par conception mais
+  instrumentés</b> (compteurs Prometheus <code>game_*</code>, journaux) : <b>reconnaissance</b>
+  (fuite progressive — comptes clients, soldes approximatifs, présence d'un livret) et
+  <b>retrait plafonné</b> (vol atomique <code>FOR UPDATE</code>, jamais négatif, plafonné par
+  coup et en cumulé). L'attaquant débloque des <b>astuces</b> de deux façons : à intervalle
+  (minuteur) <b>et</b> à chaque attaque réussie (fuite ou butin).</p>
+  <p>Le couple <b>détecteur ML + orchestrateur</b> surveille les retraits anormaux, le motif
+  d'énumération et l'anomalie de trafic. Dès qu'il détecte la compromission (butin trop élevé,
+  ou attaque trop forte pendant l'exploitation), l'IA <b>bloque l'attaquant</b> (cooldown de
+  plusieurs minutes, attaques refusées et affichées en compte à rebours), <b>bascule vers le
+  secours</b> (réutilisation du mécanisme HA ; en montage 2 PC, dégradé 503 du principal →
+  <code>proxy_next_upstream</code> nginx) et <b>restaure le butin</b> sur le compte cible
+  (intégrité / secours sain). Résultat clé : <b>si l'IA bascule à temps, l'argent volé ne
+  « gagne » pas</b>. Quand la menace retombe, retour automatique à la normale. L'attaquant doit
+  donc <b>doser</b> : jouer discret rapporte un petit butin ; forcer déclenche le blocage.</p>
 </section>
 
 <!-- 5. SÉCURITÉ -->

@@ -200,6 +200,26 @@ gov.forEach((g, i) => {
 });
 tb(s, "Recommandations : industrialiser la reprise (HA + WAF réseau) · formaliser la notification d'incident · tests de résilience réguliers.", { x: 0.6, y: 6.0, w: 12, h: 0.9, fontSize: 13.5, bold: true, color: NAVY, margin: 0, lineSpacingMultiple: 1.2 });
 
+/* 9b — Jeu de hacker : compromission -> blocage -> bascule */
+s = p.addSlide(); s.background = { color: WHITE };
+titleBar(s, "Jeu de hacker : voler… ou se faire bloquer", "Démonstration interactive");
+tb(s, "Zone « Reconnaissance / Opération » ajoutée à la console attaquant : un jeu d'équilibre.", { x: 0.6, y: 1.5, w: 12.1, h: 0.4, fontSize: 13.5, color: MUT, margin: 0 });
+const jeu = [
+  ["🔍", "Reconnaissance discrète", "fuite progressive : comptes, soldes approximatifs, livret d'épargne"],
+  ["💡", "Astuces débloquées", "au minuteur (compte à rebours) ET à chaque attaque réussie"],
+  ["💰", "Vol plafonné", "retrait atomique, jamais négatif, plafonné par coup et en cumulé"],
+  ["🧠", "Détection IA + réponse", "butin anormal ou attaque trop forte → blocage (cooldown)"],
+  ["🛡️", "Bascule secours + butin annulé", "l'argent volé ne « gagne » pas si l'IA bascule à temps"],
+];
+jeu.forEach((d, i) => {
+  const y = 2.0 + i * 0.97;
+  card(s, 0.6, y, 12.1, 0.82, SOFT);
+  tb(s, d[0], { x: 0.8, y: y + 0.12, w: 0.8, h: 0.6, fontSize: 24, align: "center", margin: 0 });
+  tb(s, d[1], { x: 1.7, y: y + 0.11, w: 10.7, h: 0.35, fontSize: 14.5, bold: true, color: NAVY, margin: 0 });
+  tb(s, d[2], { x: 1.7, y: y + 0.46, w: 10.7, h: 0.3, fontSize: 11.5, color: MUT, margin: 0 });
+});
+tb(s, "Doser : jouer discret rapporte un petit butin ; forcer déclenche le blocage, la bascule et la restauration.", { x: 0.6, y: 6.95, w: 12.1, h: 0.4, fontSize: 12, bold: true, color: PURPLE, margin: 0 });
+
 /* 10 — Conclusion */
 s = p.addSlide(); s.background = { color: NAVY };
 tb(s, "À vous de jouer", { x: 0.8, y: 2.2, w: 11.7, h: 1.0, fontSize: 40, bold: true, color: WHITE, fontFace: HEAD, margin: 0 });

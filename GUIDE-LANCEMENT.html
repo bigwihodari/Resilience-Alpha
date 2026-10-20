@@ -179,6 +179,13 @@ TARGET_HOST=192.168.137.1</pre></div></div>
     <div class="step"><div class="b">5</div><div>Régler l'intensité / la durée, puis <b>« Lancer la sélection »</b> — ou
       <b>« TOUT LANCER »</b> (les 7 d'un coup) pour <b>saturer et faire tomber le principal</b> :
       on voit alors le <b>secours prendre le relais</b> sur la page Haute-Dispo du cockpit.</div></div>
+    <div class="step"><div class="b">6</div><div>🎯 <b>Zone « Reconnaissance / Opération » (le jeu)</b>, sous le panneau d'attaque :
+      <ol>
+        <li><b>SONDER</b> la cible (discret) → fuite progressive (comptes, soldes approximatifs, livret) et <b>astuces</b> débloquées.</li>
+        <li>Les <b>astuces</b> arrivent de deux façons : au <b>minuteur</b> (« prochaine astuce dans mm:ss ») <b>et</b> à chaque <b>succès</b> (fuite ou butin).</li>
+        <li>Après assez d'infos : <b>TENTER UN RETRAIT</b> (vol <b>plafonné</b>) sur le compte courant ou le livret → <b>butin</b> cumulé affiché.</li>
+        <li><b>Dose !</b> Trop de retraits (butin trop gros) ou une <b>attaque trop forte</b> → l'IA te repère : <b>COOLDOWN</b> (attaques refusées), <b>bascule secours</b> et <b>butin annulé</b> (restauré sur la cible). Reste discret pour gagner.</li>
+      </ol></div></div>
   </div>
 
   <!-- ordre + dépannage -->
@@ -195,6 +202,7 @@ TARGET_HOST=192.168.137.1</pre></div></div>
         <li>L'attaquant lance <b>plusieurs vecteurs / « TOUT LANCER »</b> sur le principal ; le cockpit montre la <b>détection IA</b> puis la <b>remédiation</b> (bouclier, canari).</li>
         <li>Le principal sature et <b>tombe</b> → page <b>Haute-Dispo</b> : le <b>SECOURS est promu</b> et sert le trafic ; les clients continuent à payer (bascule nginx, aucune transaction perdue).</li>
         <li>On <b>stoppe l'attaque</b> : le principal se répare → <b>retour automatique</b> au principal (réconciliation) ; le solde est intact.</li>
+        <li><b>Variante « jeu de hacker »</b> (zone Reconnaissance/Opération de la console) : l'attaquant <b>sonde</b> en douce, débloque des <b>astuces</b>, réussit un <b>petit vol discret</b> (butin conservé) ; puis il <b>force</b> (gros butin ou flood) → l'IA <b>bloque</b> (cooldown affiché), <b>bascule sur le secours</b> et <b>neutralise le butin</b> → l'argent volé ne « gagne » pas. Cooldown écoulé → retour normal.</li>
       </ol></div></div>
   </div>
 

@@ -138,7 +138,11 @@ PC distinct qui attaque le **serveur principal** (dans votre labo uniquement).
    TARGET_HOST=192.168.137.1
    ```
 3. Lancer : `.\start.ps1`
-4. Ouvrir **http://localhost:8090** → choisir l'attaque (Saturation / Injection SQL), régler l'intensité, **Lancer**.
+4. Ouvrir **http://localhost:8090** → choisir l'attaque (7 vecteurs), régler l'intensité, **Lancer** (ou **TOUT LANCER**).
+5. 🎯 **Zone « Reconnaissance / Opération » (le jeu)**, sous le panneau d'attaque :
+   - **SONDER** la cible (discret) → fuite progressive (comptes, soldes approx, livret) + **astuces** débloquées **au minuteur ET à chaque succès**.
+   - **TENTER UN RETRAIT** (vol **plafonné**) → **butin** cumulé affiché.
+   - **Dose !** Trop de retraits ou attaque trop forte → l'IA bloque (**cooldown**, attaques refusées), **bascule secours** et **butin annulé**. Discrétion = gagner.
 
 Mettre à jour : `.\update.ps1` · Arrêter : `.\stop.ps1`
 
@@ -152,6 +156,9 @@ Mettre à jour : `.\update.ps1` · Arrêter : `.\stop.ps1`
 4. **Attaquant** : se connecter + configurer `attacker/.env` + `start.ps1`.
 5. **Démo** : les clients se paient ; l'attaquant frappe le principal ; le cockpit montre
    détection → remédiation ; si le principal tombe, les clients basculent sur le backup.
+6. **Démo « jeu de hacker »** : l'attaquant sonde en douce → astuces → **petit vol discret**
+   (butin conservé) ; puis il **force** (gros butin / flood) → l'IA **bloque** (cooldown),
+   **bascule sur le secours** et **neutralise le butin** → l'argent volé ne gagne pas.
 
 ---
 
