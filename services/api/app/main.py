@@ -8,6 +8,7 @@ import os
 import re
 import time
 import json
+import math
 import random
 import asyncio
 import threading
@@ -15,7 +16,7 @@ import datetime as dt
 
 import jwt
 import requests
-from fastapi import FastAPI, HTTPException, Depends, Header, Body, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Depends, Header, Body, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from sqlalchemy import (
     create_engine, Integer, String, Numeric, ForeignKey, DateTime, func, select, text,
@@ -162,6 +163,96 @@ CATCH_PVP_BASE = float(os.environ.get("CATCH_PVP_BASE", "0.20"))
 BANK_BURN_COOLDOWN = float(os.environ.get("BANK_BURN_COOLDOWN", "300"))  # 5 min si cramé sur la banque
 CLIENT_FINE_RATE = float(os.environ.get("CLIENT_FINE_RATE", "0.8"))      # perte 80 % du montant visé
 rivals = {}  # handle d'attaquant (hors primaire) -> butin, pour le PvP
+
+# ---- P4 : détection par IP/acteur — suspicion s∈[0,1] + blocage PROBABILISTE ----
+# La suspicion monte avec les signaux risqués (vols cramés, rafales, phishing,
+# retraits anormaux) et DÉCROÎT avec le temps. Le blocage est PROBABILISTE
+# (p = logistique du score, pas 100 %) et ISOLÉ : on ne bloque que l'acteur
+# suspecté, jamais les deux attaquants. La rotation d'IP (shop) réduit p ; la
+# furtivité réduit la montée du score.
+SUSP_DECAY = float(os.environ.get("SUSP_DECAY", "0.01"))    # /s (demi-vie ~70 s)
+SUSP_K = float(os.environ.get("SUSP_K", "8"))               # pente de la logistique
+SUSP_S0 = float(os.environ.get("SUSP_S0", "0.65"))          # seuil (p=0.5 au score S0)
+SUSP_COOLDOWN = float(os.environ.get("SUSP_COOLDOWN", "90"))  # durée du blocage IA (s)
+suspicion = {}  # actor -> {score, last, blocked_until, ip, last_reason}
+susp_lock = threading.Lock()
+
+
+def _proxy_factor() -> float:
+    """Rotation d'IP/proxy (shop) : réduit la probabilité de blocage."""
+    return max(0.1, 1.0 - 0.12 * _hk_level("proxy"))
+
+
+def _susp(actor: str) -> dict:
+    """Entrée de suspicion de l'acteur, avec décroissance temporelle appliquée."""
+    now = time.time()
+    with susp_lock:
+        e = suspicion.get(actor)
+        if e is None:
+            e = {"score": 0.0, "last": now, "blocked_until": 0.0, "ip": "", "last_reason": ""}
+            suspicion[actor] = e
+        dtp = now - e["last"]
+        if dtp > 0 and e["score"] > 0:
+            e["score"] = round(e["score"] * math.exp(-SUSP_DECAY * dtp), 4)
+            e["last"] = now
+        return e
+
+
+def _resolve_actor(request, x_player):
+    """Acteur : le handle X-Player s'il est fourni (rivals/multi-attaquant), sinon
+    l'attaquant PRIMAIRE (console) — dont le cooldown reste porté par game_state."""
+    if x_player and x_player.strip():
+        return x_player.strip()[:32], False
+    return "attaquant", True
+
+
+def _actor_ip(request) -> str:
+    xff = request.headers.get("x-forwarded-for", "") if request else ""
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if (request and request.client) else ""
+
+
+def _actor_cooldown(actor: str, is_primary: bool) -> float:
+    if is_primary:
+        return _cooldown_remaining()
+    e = _susp(actor)
+    return max(0.0, round(e["blocked_until"] - time.time(), 1))
+
+
+def _bump_suspicion(actor: str, delta: float, ip: str = "", reason: str = ""):
+    """Monte la suspicion (atténuée par la furtivité). Clampée [0,1]."""
+    e = _susp(actor)
+    with susp_lock:
+        e["score"] = round(min(1.0, max(0.0, e["score"] + delta * _stealth_factor())), 4)
+        e["last"] = time.time()
+        if ip:
+            e["ip"] = ip
+        if reason:
+            e["last_reason"] = reason
+
+
+def _block_prob(score: float) -> float:
+    return min(1.0, (1.0 / (1.0 + math.exp(-SUSP_K * (score - SUSP_S0)))) * _proxy_factor())
+
+
+def _maybe_block(actor: str, is_primary: bool, reason: str):
+    """Tirage PROBABILISTE du blocage selon le score (isolation : seul cet acteur)."""
+    e = _susp(actor)
+    p = _block_prob(e["score"])
+    if random.random() <= p:
+        if is_primary:
+            with game_lock:
+                game_state["blocked_until"] = time.time() + SUSP_COOLDOWN
+                game_state["block_reason"] = reason
+            GAME_BLOCKED.set(1)
+        else:
+            with susp_lock:
+                e["blocked_until"] = time.time() + SUSP_COOLDOWN
+                e["last_reason"] = reason
+        print(f"[GAME] IA BLOCK actor={actor} p={p:.2f} score={e['score']:.2f} — {reason}", flush=True)
+        return True, round(p, 3)
+    return False, round(p, 3)
 
 game_state = {
     "victim": GAME_VICTIM,
@@ -1657,6 +1748,7 @@ def intel_buy(offer_id: int, x_player: str = Header(default=None)):
         loot_now = game_state["loot"]
     GAME_INSIDER.inc()
     GAME_LOOT.set(loot_now)
+    _bump_suspicion(buyer, 0.10, reason="achat d'intel insider")
     print(f"[GAME] INSIDER buy offer={offer_id} buyer={buyer} target={target} price={price}", flush=True)
     return {"ok": True, "target": target, "price": price, "intel": intel_line,
             "ready_to_heist": True, **_game_public()}
@@ -1719,6 +1811,27 @@ def game_state_public():
     return _game_public()
 
 
+@app.get("/game/suspicion")
+def game_suspicion():
+    """P4 — état de la détection par IP/acteur : score de suspicion, proba de
+    blocage et cooldown restant PAR acteur (pour la console et le cockpit).
+    Isolation : chaque acteur a son propre score, on ne bloque que le suspect."""
+    now = time.time()
+    with susp_lock:
+        keys = list(suspicion.keys())
+    actors = []
+    for actor in keys:
+        e = _susp(actor)  # applique la décroissance
+        is_primary = actor == "attaquant"
+        cd = _cooldown_remaining() if is_primary else max(0.0, round(e["blocked_until"] - now, 1))
+        actors.append({"actor": actor, "ip": e.get("ip", ""), "score": round(e["score"], 3),
+                       "p_block": round(_block_prob(e["score"]), 3),
+                       "cooldown_remaining": cd, "blocked": cd > 0,
+                       "reason": e.get("last_reason", "")})
+    actors.sort(key=lambda a: a["score"], reverse=True)
+    return {"s0": SUSP_S0, "cooldown": SUSP_COOLDOWN, "actors": actors}
+
+
 class TargetIn(BaseModel):
     username: str
 
@@ -1745,13 +1858,17 @@ def game_target(body: TargetIn):
 
 
 @app.post("/game/recon")
-def game_recon():
+def game_recon(request: Request, x_player: str = Header(default=None)):
     """Sonde de reconnaissance : fuite progressive d'infos sur la cible (par
     conception, pour le jeu). Instrumentée (compteur Prometheus + log) pour que
-    l'IA puisse repérer un motif d'énumération."""
-    if _cooldown_remaining() > 0:
-        raise HTTPException(403, f"attaquant bloqué — cooldown {_cooldown_remaining()}s")
+    l'IA puisse repérer un motif d'énumération. Monte la suspicion de l'acteur."""
+    actor, is_primary = _resolve_actor(request, x_player)
+    cd = _actor_cooldown(actor, is_primary)
+    if cd > 0:
+        raise HTTPException(403, f"attaquant bloqué — cooldown {cd}s")
     GAME_RECON.inc()
+    _bump_suspicion(actor, 0.04, _actor_ip(request), "reconnaissance")
+    _maybe_block(actor, is_primary, "énumération repérée par l'IA")
     with Session(engine()) as s:
         clients = s.execute(
             select(User.username, Account.balance, Account.savings)
@@ -1978,37 +2095,56 @@ def _heist_pvp(target: str):
 
 
 @app.post("/game/heist")
-def game_heist(body: HeistIn):
+def game_heist(body: HeistIn, request: Request, x_player: str = Header(default=None)):
     """Vol généralisé (P3/P3.5) : cible CLIENT, BANQUE (coffre) ou ATTAQUANT (PvP).
     Retrait atomique (FOR UPDATE, jamais négatif) + risque de se faire cramer :
     - banque : très rentable, très risqué ; cramé = perte TOTALE du butin + cooldown 5 min ;
     - client : plus facile, difficulté exp. (fréquence+montant) ; cramé = perte 80 % + claw-back ;
     - attaquant : PvP, vole le butin d'un rival.
-    Tout est tracé (game_theft_total{target_type,result})."""
-    if _cooldown_remaining() > 0:
-        raise HTTPException(403, f"attaquant bloqué — cooldown {_cooldown_remaining()}s")
+    Tout est tracé (game_theft_total{target_type,result}). La suspicion (P4) monte
+    puis déclenche un blocage PROBABILISTE et ISOLÉ de l'acteur."""
+    actor, is_primary = _resolve_actor(request, x_player)
+    cd = _actor_cooldown(actor, is_primary)
+    if cd > 0:
+        raise HTTPException(403, f"attaquant bloqué — cooldown {cd}s")
     target = (body.target or game_state.get("victim") or "").strip()
     if not target:
         raise HTTPException(400, "aucune cible sélectionnée")
     # PvP : cible = un autre attaquant
     if (body.target_type or "").lower() == "attacker" or target in rivals:
-        return _heist_pvp(target)
-    with Session(engine()) as s:
-        tu = s.scalar(select(User).where(User.username == target))
-        if tu is None:
-            raise HTTPException(404, "cible introuvable")
-        role = tu.role or "client"
-    # recon requise (atténuée par le décodeur) pour clients et banque
-    need = _recon_needed()
-    with game_lock:
-        rc = game_state["recon_count"]
-    if rc < need:
-        raise HTTPException(400, f"reconnaissance insuffisante ({rc}/{need})")
-    if role == "bank" or target == BANK_USER:
-        return _heist_bank(target, body)
-    if role != "client":
-        raise HTTPException(400, "cible non volable")
-    return _heist_client(target, body)
+        res = _heist_pvp(target)
+        tt = "attacker"
+    else:
+        with Session(engine()) as s:
+            tu = s.scalar(select(User).where(User.username == target))
+            if tu is None:
+                raise HTTPException(404, "cible introuvable")
+            role = tu.role or "client"
+        # recon requise (atténuée par le décodeur) pour clients et banque
+        need = _recon_needed()
+        with game_lock:
+            rc = game_state["recon_count"]
+        if rc < need:
+            raise HTTPException(400, f"reconnaissance insuffisante ({rc}/{need})")
+        if role == "bank" or target == BANK_USER:
+            res, tt = _heist_bank(target, body), "bank"
+        elif role == "client":
+            res, tt = _heist_client(target, body), "client"
+        else:
+            raise HTTPException(400, "cible non volable")
+    # P4 : la suspicion monte (plus fort si cramé) puis tirage de blocage isolé.
+    caught = bool(res.get("caught"))
+    delta = {"bank": 0.25, "client": 0.12, "attacker": 0.08}.get(tt, 0.12)
+    if caught and tt != "bank":  # la banque cramée bloque déjà par elle-même
+        delta += 0.3
+    _bump_suspicion(actor, delta, _actor_ip(request), f"vol {tt}" + (" (cramé)" if caught else ""))
+    blocked, p = _maybe_block(actor, is_primary, "activité de vol suspecte")
+    res["suspicion"] = round(_susp(actor)["score"], 3)
+    res["p_block"] = p
+    if blocked:
+        res["blocked_now"] = True
+    res.update(_game_public())
+    return res
 
 
 # ---- P3.5 : SHOP HACKER (payé avec le butin) ----
@@ -2165,12 +2301,15 @@ class HijackIn(BaseModel):
 
 
 @app.post("/game/dino-hijack")
-def dino_hijack(body: HijackIn, x_player: str = Header(default=None)):
+def dino_hijack(body: HijackIn, request: Request, x_player: str = Header(default=None)):
     """Hack attaquant : tente de détourner le prochain gain Dino d'un client.
     Protégé par l'IA : proba de succès qui chute avec l'activité déjà menée ;
-    sur échec, risque de blocage (cooldown). Succès => détournement armé."""
-    if _cooldown_remaining() > 0:
-        raise HTTPException(403, f"attaquant bloqué — cooldown {_cooldown_remaining()}s")
+    sur échec, risque de blocage (cooldown). Succès => détournement armé.
+    Monte la suspicion de l'acteur (P4)."""
+    actor, is_primary = _resolve_actor(request, x_player)
+    cd = _actor_cooldown(actor, is_primary)
+    if cd > 0:
+        raise HTTPException(403, f"attaquant bloqué — cooldown {cd}s")
     target = (body.target or "").strip()
     with Session(engine()) as s:
         tu = s.scalar(select(User).where(User.username == target))
@@ -2183,16 +2322,20 @@ def dino_hijack(body: HijackIn, x_player: str = Header(default=None)):
         with game_lock:
             game_state["dino_hijack"] = {"target": target}
         GAME_DINO_HIJACK.labels(result="armed").inc()
+        _bump_suspicion(actor, 0.12, _actor_ip(request), "détournement Dino armé")
         print(f"[GAME] DINO-HIJACK ARMED target={target} p={p_success:.2f}", flush=True)
         return {"ok": True, "armed": True, "target": target,
                 "message": f"Détournement armé sur « {target} » : son prochain gain Dino "
                            f"sera en partie exfiltré.", **_game_public()}
     GAME_DINO_HIJACK.labels(result="fail").inc()
-    if random.random() <= DINO_HIJACK_BLOCK_P:
-        with game_lock:
-            game_state["blocked_until"] = time.time() + DINO_HIJACK_COOLDOWN
-            game_state["block_reason"] = "détournement Dino repéré par l'IA"
-        GAME_BLOCKED.set(1)
+    _bump_suspicion(actor, 0.30, _actor_ip(request), "détournement Dino raté")
+    blocked_susp, _p = _maybe_block(actor, is_primary, "détournement Dino repéré par l'IA")
+    if blocked_susp or random.random() <= DINO_HIJACK_BLOCK_P:
+        if not blocked_susp:
+            with game_lock:
+                game_state["blocked_until"] = time.time() + DINO_HIJACK_COOLDOWN
+                game_state["block_reason"] = "détournement Dino repéré par l'IA"
+            GAME_BLOCKED.set(1)
         print(f"[GAME] DINO-HIJACK FAIL+BLOCK target={target}", flush=True)
         return {"ok": False, "armed": False, "blocked": True,
                 "message": "Détournement repéré par l'IA — tu es bloqué (cooldown).",

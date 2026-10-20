@@ -43,6 +43,8 @@ state = {
     # Compromission (jeu) : blocage attaquant + bascule secours + protection de l'argent.
     "compromise": "CLEAR", "attacker_blocked": False, "cooldown_remaining": 0.0,
     "failover": False, "loot": 0.0, "loot_neutralized": 0.0,
+    # P4 — détection par IP/acteur : scores de suspicion + acteurs bloqués (isolation).
+    "suspicion": [], "top_suspicion": 0.0, "blocked_actors": [],
 }
 lock = threading.Lock()
 ACTIVEG = Gauge("remediation_active", "1 si bouclier de remediation actif")
@@ -119,6 +121,14 @@ def game_status():
         return requests.get(f"{API}/game/state", timeout=4).json()
     except Exception:
         return {}
+
+
+def game_suspicion():
+    """P4 — état de la détection par IP/acteur (score, proba, cooldown par acteur)."""
+    try:
+        return requests.get(f"{API}/game/suspicion", timeout=4).json()
+    except Exception:
+        return {"actors": []}
 
 
 def game_admin(path, payload=None):
@@ -214,65 +224,59 @@ def loop():
             with lock:
                 state["security_state"] = "CLEAR"
 
-        # --- Playbook COMPROMISSION-JEU : vol/fuite -> blocage + bascule secours ---
+        # --- P4 : détection par IP/acteur (blocage PROBABILISTE + ISOLATION) ---
+        # L'API calcule une suspicion s∈[0,1] PAR acteur et déclenche elle-même un
+        # blocage probabiliste (p=f(s), pas 100 %) en n'isolant QUE l'IP suspectée.
+        # L'orchestrateur OBSERVE cet état, l'expose au cockpit, et sur un blocage
+        # lève la banderole « bascule secours » + prouve le service par un canari.
         g = game_status()
+        susp = game_suspicion()
+        actors = susp.get("actors", []) or []
         loot = float(g.get("loot", 0) or 0)
-        heist_count = int(g.get("heist_count", 0) or 0)
-        recon_rate = prom("sum(rate(game_recon_total[1m]))")
-        heist_rate = prom("sum(rate(game_heist_total[1m]))")
+        blocked_actors = [a for a in actors if a.get("blocked")]
+        primary_blocked = bool(g.get("blocked"))
+        # le primaire « attaquant » peut ne pas figurer dans actors s'il n'a jamais
+        # agi ; on le reflète via game_state.
+        if primary_blocked and not any(a.get("actor") == "attaquant" for a in blocked_actors):
+            blocked_actors.append({"actor": "attaquant", "ip": "",
+                                   "cooldown_remaining": float(g.get("cooldown_remaining", 0) or 0),
+                                   "score": float(susp.get("s0", 0))})
         with lock:
             state["loot"] = loot
             state["loot_neutralized"] = float(g.get("loot_neutralized", 0) or 0)
-            state["attacker_blocked"] = bool(g.get("blocked"))
+            state["attacker_blocked"] = bool(blocked_actors)
             state["cooldown_remaining"] = float(g.get("cooldown_remaining", 0) or 0)
+            state["suspicion"] = actors
+            state["top_suspicion"] = max([a.get("score", 0.0) for a in actors], default=0.0)
+            state["blocked_actors"] = [a.get("actor") for a in blocked_actors]
             comp = state["compromise"]
 
-        # Signaux de compromission : butin trop gros, OU attaque trop forte PENDANT
-        # un vol en cours (butin en main), OU énumération/retraits trop rapides.
-        # NB : on exige loot>0 pour la voie ML — une simple sonde (recon_rate>0
-        # pendant 60s) ne doit PAS armer un blocage au repos si le score ML dérive.
-        trigger = (loot >= GAME_LOOT_ALERT
-                   or (is_anom and loot > 0)
-                   or recon_rate > GAME_RECON_RATE_ALERT
-                   or heist_rate > GAME_HEIST_RATE_ALERT)
-
-        if comp == "CLEAR" and trigger:
-            reason = ("butin anormal" if loot >= GAME_LOOT_ALERT else
-                      "attaque trop forte (anomalie ML)" if is_anom else
-                      "motif d'énumération/retraits suspect")
-            add_event(f"COMPROMISSION détectée ({reason}, butin {loot:.0f}€) — réponse IA", "alert")
+        if comp == "CLEAR" and blocked_actors:
+            a = blocked_actors[0]
+            who = a.get("actor", "?")
+            ip = a.get("ip") or "n/a"
+            add_event(f"IA : acteur « {who} » (IP {ip}) BLOQUÉ — suspicion {a.get('score')} ; "
+                      f"ISOLATION : les autres joueurs continuent", "alert")
             with lock:
                 state["compromise"] = "BLOCKED"
                 state["failover"] = True
-            # 1) Bloquer l'attaquant (cooldown visible côté console)
-            game_admin("/game/admin/block", {"seconds": GAME_COOLDOWN, "reason": reason})
-            add_event(f"Attaquant BLOQUÉ — cooldown {int(GAME_COOLDOWN)}s ; ses attaques sont refusées", "action")
-            # 2) Bascule vers le secours (nginx proxy_next_upstream si GAME_DEGRADE=1)
-            set_degrade(True)
-            add_event("Bascule : le principal (compromis) passe la main au SECOURS", "action")
-            # 3) Protéger l'argent : restaurer le butin (secours sain / intégrité)
-            cb = game_admin("/game/admin/clawback")
-            restored = (cb or {}).get("restored", 0)
-            with lock:
-                state["loot_neutralized"] = float((cb or {}).get("loot_neutralized", state["loot_neutralized"]))
-                state["loot"] = float((cb or {}).get("loot", 0))
-            add_event(f"Butin neutralisé ({restored:.0f}€ restaurés) — l'argent volé ne 'gagne' pas", "success")
-            # 4) Prouver que le service reste utilisable
+            set_degrade(True)  # banderole bascule (nginx si GAME_DEGRADE=1 sur 2 PC)
+            add_event("Bascule : le principal passe la main au SECOURS (isolation du suspect)", "action")
             ok, lat, detail = run_canary_record()
             if ok:
-                add_event(f"Transaction canari RÉUSSIE ({lat} ms) — service protégé", "success")
+                add_event(f"Transaction canari RÉUSSIE ({lat} ms) — service protégé malgré l'attaque", "success")
             game_clear = 0
 
         elif comp == "BLOCKED":
-            cd = float(g.get("cooldown_remaining", 0) or 0)
-            calm = (not is_anom and recon_rate < 0.1 and heist_rate < 0.05 and loot < GAME_LOOT_ALERT)
+            calm = not blocked_actors and not is_anom
             game_clear = game_clear + 1 if calm else 0
-            if cd <= 0 and game_clear >= CLEAR:
+            if game_clear >= CLEAR:
                 set_degrade(False)
                 with lock:
                     state["compromise"] = "CLEAR"
                     state["failover"] = False
-                add_event("Menace levée — retour à la normale, le principal reprend la main", "success")
+                add_event("Menace levée — cooldowns écoulés, l'IA relâche l'isolation, "
+                          "le principal reprend la main", "success")
 
         time.sleep(POLL)
 
