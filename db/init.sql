@@ -16,6 +16,18 @@ CREATE TABLE IF NOT EXISTS accounts (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Livrets d'epargne SUPPLEMENTAIRES (le principal reste accounts.savings).
+-- Chaque livret produit des interets a son propre taux (jeu idle).
+CREATE TABLE IF NOT EXISTS livrets (
+    id         SERIAL PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name       VARCHAR(40) NOT NULL DEFAULT 'Livret',
+    balance    NUMERIC(14,2) NOT NULL DEFAULT 0,
+    rate       NUMERIC(6,4) NOT NULL DEFAULT 0,
+    level      INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Destinataires favoris (paiement en un clic, sans recherche).
 CREATE TABLE IF NOT EXISTS favorites (
     id           SERIAL PRIMARY KEY,

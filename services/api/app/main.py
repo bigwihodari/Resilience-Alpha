@@ -46,6 +46,10 @@ savings_cfg = {"rate": SAVINGS_RATE, "interval": SAVINGS_INTERVAL}
 # evite les "paiements vers des comptes inexistants".
 MERCHANTS = set(m.strip() for m in os.environ.get(
     "MERCHANTS", "MERCHANT-01,MERCHANT-02,MERCHANT-03,SHOP-42,CANARY").split(",") if m.strip())
+
+# Condition de victoire du jeu : premier (client OU attaquant) a atteindre la cible.
+WIN_TARGET = float(os.environ.get("WIN_TARGET", "1000000"))
+game_winner = {"name": None, "camp": None, "networth": 0.0, "at": None}
 FAIL_PROMOTE = int(os.environ.get("FAIL_PROMOTE", "3"))       # échecs avant promotion du secours
 FAILBACK_CONFIRM = int(os.environ.get("FAILBACK_CONFIRM", "3"))  # cycles OK avant retour au principal
 repl_state = {"role": ROLE, "name": HA_NAME, "promoted": ROLE == "primary", "peer": PEER_API_URL,
@@ -155,6 +159,18 @@ class Favorite(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     fav_username: Mapped[str] = mapped_column(String(64))
+
+
+class Livret(Base):
+    """Livret d'épargne SUPPLÉMENTAIRE (le livret principal reste accounts.savings).
+    Chaque livret produit des intérêts à son propre taux (jeu idle)."""
+    __tablename__ = "livrets"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    name: Mapped[str] = mapped_column(String(40), default="Livret")
+    balance: Mapped[float] = mapped_column(Numeric(14, 2), default=0)
+    rate: Mapped[float] = mapped_column(Numeric(6, 4), default=0)   # taux par cycle propre
+    level: Mapped[int] = mapped_column(Integer, default=1)
 
 
 class Transaction(Base):
@@ -287,6 +303,11 @@ def startup():
                        "id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, "
                        "fav_username VARCHAR(64) NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), "
                        "UNIQUE(user_id, fav_username))"))
+        c.execute(text("CREATE TABLE IF NOT EXISTS livrets ("
+                       "id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, "
+                       "name VARCHAR(40) NOT NULL DEFAULT 'Livret', balance NUMERIC(14,2) NOT NULL DEFAULT 0, "
+                       "rate NUMERIC(6,4) NOT NULL DEFAULT 0, level INTEGER NOT NULL DEFAULT 1, "
+                       "created_at TIMESTAMPTZ NOT NULL DEFAULT now())"))
     # Livret initial pour la cible du jeu (fuite « présence d'un livret » + vol épargne).
     if ROLE == "primary" and GAME_SEED_SAVINGS > 0:
         try:
@@ -476,29 +497,179 @@ def savings_withdraw(body: SavingsOp, user: str = Depends(current_user)):
     return _savings_move(user, body.amount, "withdraw")
 
 
+# -------- Livrets supplémentaires + fortune + leaderboard (jeu idle) --------
+class LivretIn(BaseModel):
+    name: str | None = None
+
+
+class LivretOp(BaseModel):
+    amount: float
+
+
+def _user_or_404(s, user):
+    u = s.scalar(select(User).where(User.username == user))
+    if u is None:
+        raise HTTPException(404, "user not found")
+    return u
+
+
+@app.get("/livrets")
+def list_livrets(user: str = Depends(current_user)):
+    with Session(engine()) as s:
+        u = _user_or_404(s, user)
+        acc = s.scalar(select(Account).where(Account.user_id == u.id))
+        extras = s.scalars(select(Livret).where(Livret.user_id == u.id).order_by(Livret.id)).all()
+        return {
+            "principal": {"balance": float(acc.savings), "rate": savings_cfg["rate"]},
+            "livrets": [{"id": lv.id, "name": lv.name, "balance": float(lv.balance),
+                         "rate": float(lv.rate), "level": lv.level} for lv in extras],
+            "interval": savings_cfg["interval"],
+        }
+
+
+@app.post("/livrets")
+def create_livret(body: LivretIn, user: str = Depends(current_user)):
+    # P0 : création libre (P1 shop ajoutera le coût exponentiel). Taux = taux de base.
+    with Session(engine()) as s:
+        u = _user_or_404(s, user)
+        n = s.scalar(select(func.count()).select_from(Livret).where(Livret.user_id == u.id)) or 0
+        name = (body.name or f"Livret {int(n) + 2}")[:40]
+        lv = Livret(user_id=u.id, name=name, balance=0, rate=savings_cfg["rate"], level=1)
+        s.add(lv)
+        s.commit()
+        return {"id": lv.id, "name": lv.name, "balance": 0.0, "rate": float(lv.rate), "level": 1}
+
+
+def _livret_move(user, livret_id, amount, op):
+    if amount <= 0:
+        raise HTTPException(400, "le montant doit être positif")
+    with Session(engine()) as s:
+        u = _user_or_404(s, user)
+        acc = s.scalar(select(Account).where(Account.user_id == u.id).with_for_update())
+        lv = s.scalar(select(Livret).where(Livret.id == livret_id,
+                                           Livret.user_id == u.id).with_for_update())
+        if acc is None or lv is None:
+            raise HTTPException(404, "livret introuvable")
+        if op == "deposit":
+            if float(acc.balance) < amount:
+                raise HTTPException(402, "solde courant insuffisant")
+            acc.balance = float(acc.balance) - amount
+            lv.balance = float(lv.balance) + amount
+        else:
+            if float(lv.balance) < amount:
+                raise HTTPException(402, "livret insuffisant")
+            lv.balance = float(lv.balance) - amount
+            acc.balance = float(acc.balance) + amount
+        s.commit()
+        b, lb = float(acc.balance), float(lv.balance)
+    ws_manager.publish({"type": "tx", "from": user, "to": "LIVRET", "amount": amount, "op": op})
+    return {"status": "completed", "balance": b, "livret": lb}
+
+
+@app.post("/livrets/{livret_id}/deposit")
+def livret_deposit(livret_id: int, body: LivretOp, user: str = Depends(current_user)):
+    return _livret_move(user, livret_id, body.amount, "deposit")
+
+
+@app.post("/livrets/{livret_id}/withdraw")
+def livret_withdraw(livret_id: int, body: LivretOp, user: str = Depends(current_user)):
+    return _livret_move(user, livret_id, body.amount, "withdraw")
+
+
+@app.get("/me/networth")
+def my_networth(user: str = Depends(current_user)):
+    with Session(engine()) as s:
+        u = _user_or_404(s, user)
+        acc = s.scalar(select(Account).where(Account.user_id == u.id))
+        lt = s.scalar(select(func.coalesce(func.sum(Livret.balance), 0)).where(Livret.user_id == u.id)) or 0
+        nw = _networth_row(acc.balance, acc.savings, lt)
+    return {"courant": float(acc.balance), "savings": float(acc.savings),
+            "livrets_total": float(lt), "networth": nw, "target": WIN_TARGET,
+            "won": nw >= WIN_TARGET, "progress": round(min(1.0, nw / WIN_TARGET), 4)}
+
+
+@app.get("/leaderboard")
+def leaderboard():
+    with Session(engine()) as s:
+        rows = s.execute(
+            select(User.username, Account.balance, Account.savings,
+                   func.coalesce(func.sum(Livret.balance), 0))
+            .join(Account, Account.user_id == User.id)
+            .outerjoin(Livret, Livret.user_id == User.id)
+            .where(User.role == "client")
+            .group_by(User.username, Account.balance, Account.savings)
+        ).all()
+    board = [{"name": r[0], "camp": "client", "networth": _networth_row(r[1], r[2], r[3])} for r in rows]
+    board.append({"name": "attaquant", "camp": "attaquant", "networth": round(float(game_state.get("loot", 0)), 2)})
+    board.sort(key=lambda x: x["networth"], reverse=True)
+    return {"target": WIN_TARGET, "winner": game_winner if game_winner["name"] else None, "board": board[:20]}
+
+
+def _networth_row(balance, savings, livret_total):
+    return round(float(balance) + float(savings) + float(livret_total), 2)
+
+
+def _check_win():
+    """Détecte le premier joueur (client OU attaquant) à atteindre WIN_TARGET.
+    Fortune client = courant + livret principal + livrets ; attaquant = butin cumulé."""
+    if game_winner["name"] is not None:
+        return
+    winner = None
+    with Session(engine()) as s:
+        rows = s.execute(
+            select(User.username, Account.balance, Account.savings,
+                   func.coalesce(func.sum(Livret.balance), 0))
+            .join(Account, Account.user_id == User.id)
+            .outerjoin(Livret, Livret.user_id == User.id)
+            .where(User.role == "client")
+            .group_by(User.username, Account.balance, Account.savings)
+        ).all()
+    for uname, bal, sav, lt in rows:
+        nw = _networth_row(bal, sav, lt)
+        if nw >= WIN_TARGET and (winner is None or nw > winner[1]):
+            winner = (uname, nw, "client")
+    # Attaquant : butin détenu
+    try:
+        loot = float(game_state.get("loot", 0))
+        if loot >= WIN_TARGET and (winner is None or loot > winner[1]):
+            winner = (game_state.get("victim") and "attaquant" or "attaquant", loot, "attaquant")
+    except Exception:  # noqa: BLE001
+        pass
+    if winner:
+        game_winner.update({"name": winner[0], "networth": winner[1],
+                            "camp": winner[2], "at": time.time()})
+        ws_manager.publish({"type": "win", "name": winner[0], "camp": winner[2], "networth": winner[1]})
+        print(f"[GAME] VICTOIRE {winner[2]} {winner[0]} -> {winner[1]}", flush=True)
+
+
 def savings_interest_loop():
-    """Ajoute les intérêts du livret toutes les N s (N = savings_cfg['interval'],
-    taux = savings_cfg['rate']) sur le noeud autoritaire. Paramètres réglables EN
-    DIRECT par le banquier. On ne crée PAS de ligne d'historique par tick (sinon
-    l'historique est spammé) : le livret grossit, c'est visible sur la carte."""
+    """Production idle toutes les N s (N = savings_cfg['interval']) sur le noeud
+    autoritaire : intérêts sur le livret principal (accounts.savings, taux
+    savings_cfg['rate']) ET sur chaque livret supplémentaire (à son propre taux).
+    Pas de ligne d'historique par tick (sinon spam). Vérifie la victoire ensuite."""
     while True:
         time.sleep(max(1.0, float(savings_cfg["interval"])))
         rate = float(savings_cfg["rate"])
-        if not repl_state.get("promoted") or rate <= 0:
+        if not repl_state.get("promoted"):
             continue
         try:
             touched = False
             with Session(engine()) as s:
-                accts = s.scalars(select(Account).where(Account.savings > 0)).all()
-                for a in accts:
-                    interest = round(float(a.savings) * rate, 2)
-                    if interest <= 0:
-                        continue
-                    a.savings = float(a.savings) + interest
-                    touched = True
+                if rate > 0:
+                    for a in s.scalars(select(Account).where(Account.savings > 0)).all():
+                        interest = round(float(a.savings) * rate, 2)
+                        if interest > 0:
+                            a.savings = float(a.savings) + interest
+                            touched = True
+                for lv in s.scalars(select(Livret).where(Livret.balance > 0, Livret.rate > 0)).all():
+                    interest = round(float(lv.balance) * float(lv.rate), 2)
+                    if interest > 0:
+                        lv.balance = float(lv.balance) + interest
+                        touched = True
                 s.commit()
             if touched:
                 ws_manager.publish({"type": "tx", "from": "LIVRET", "to": "", "amount": 0, "op": "interest"})
+            _check_win()
         except Exception:  # noqa: BLE001
             pass
 
