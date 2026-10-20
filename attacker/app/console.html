@@ -20,6 +20,18 @@
   h1{font-size:20px;margin:0;font-weight:800;letter-spacing:.5px}
   .target{margin-left:auto;font-size:13px;color:var(--muted)}
   .target b{color:var(--red2)}
+  /* Hero offensif */
+  header.hero{display:block;border-bottom:0;background:linear-gradient(135deg,#2a0f1f 0%,#1b1033 55%,#241a4a 100%);
+    border:1px solid var(--line);border-radius:18px;padding:18px 20px;margin-top:14px;position:relative;overflow:hidden}
+  header.hero::after{content:"";position:absolute;inset:0;pointer-events:none;
+    background:radial-gradient(420px 170px at 92% -30%,rgba(229,72,77,.28),transparent 70%)}
+  header.hero .eyebrow{font-size:11px;letter-spacing:.18em;color:var(--red2);font-weight:800}
+  header.hero h1{font-size:26px;margin:4px 0 2px}
+  header.hero p{margin:0;font-size:13px;color:var(--muted);max-width:640px;line-height:1.5}
+  header.hero .meta{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px;position:relative;z-index:1}
+  header.hero .chip{display:inline-flex;align-items:center;gap:7px;font-size:12px;background:rgba(255,255,255,.07);
+    border:1px solid var(--line);border-radius:999px;padding:6px 12px;color:var(--txt)}
+  header.hero .chip b{color:var(--red2)}
   .grid{display:grid;grid-template-columns:320px 1fr;gap:16px;margin-top:16px}
   .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
   .panel h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 12px}
@@ -135,10 +147,16 @@
 </head>
 <body>
 <div class="wrap">
-  <header>
-    <span class="dot" id="dot"></span>
-    <h1>⚔️ CONSOLE ATTAQUANT</h1>
-    <span class="target">Cible : <b id="target">__TARGET_URL__</b></span>
+  <header class="hero">
+    <div class="eyebrow">RESILIENCE-ALPHA · OFFENSIVE</div>
+    <h1>⚔️ Console attaquant</h1>
+    <p>Affaiblis l'IA avec des vecteurs d'attaque, puis sonde et exfiltre sans te faire repérer.
+       Vole les clients, la banque et les autres attaquants — et mise ton butin aux enchères.</p>
+    <div class="meta">
+      <span class="chip"><span class="dot" id="dot"></span> <span id="conn-label">prêt</span></span>
+      <span class="chip">🎯 Cible : <b id="target">__TARGET_URL__</b></span>
+      <a class="chip" href="/guide" target="_blank" rel="noreferrer" style="text-decoration:none">📖 Comment ça marche ?</a>
+    </div>
   </header>
 
   <div class="grid">
@@ -399,6 +417,7 @@ async function poll(){
     if (s.vectors) buildVectors(s.vectors);
     const totals = s.totals || {sent:s.sent, errors:s.errors, avg_latency_ms:s.avg_latency_ms, rate:0};
     $("dot").className = "dot" + (s.running ? " on" : "");
+    { const cl = $("conn-label"); if (cl) cl.textContent = s.running ? "attaque en cours" : "prêt"; }
     $("start").disabled = false; $("stopb").disabled = !s.running;
     $("k-sent").textContent = totals.sent ?? 0;
     $("k-err").textContent = totals.errors ?? 0;
