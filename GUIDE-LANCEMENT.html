@@ -119,7 +119,7 @@ REPL_TOKEN=choisir-un-token-commun</pre>
       <span class="c">Notez ces 2 valeurs : identiques sur le backup.</span></div></div>
     <div class="step"><div class="b">2</div><div>Lancer : <code>.\start.ps1</code> <span class="c">(ou <code>./start.sh</code>)</span></div></div>
     <div class="step"><div class="b">3</div><div>Vérifier : <a class="url" href="http://localhost:8080">http://localhost:8080</a> → cockpit (connexion <code>alice</code> / <code>password123</code>).</div></div>
-    <p class="c">Mettre à jour : <code>.\update.ps1</code> · Arrêter tout : <code>.\stop.ps1</code></p>
+    <p class="c">Mettre à jour : <code>.\update.ps1</code> · Redémarrer (après modif du .env) : <code>.\restart.ps1</code> · Arrêter tout : <code>.\stop.ps1</code></p>
   </div>
 
   <!-- backup -->
@@ -145,7 +145,8 @@ HOST_BACKUP=192.168.137.2    HOST_BACKUP_API_PORT=8000    HOST_BACKUP_AUTH_PORT=
     <div class="step"><div class="b">3</div><div>Lancer : <code>.\start.ps1</code></div></div>
     <div class="step"><div class="b">4</div><div><a class="url" href="http://localhost:8095">http://localhost:8095</a> → connexion : <code>alice</code> sur A, <code>bob</code> sur B.</div></div>
     <div class="step"><div class="b">5</div><div>Payer : chercher un nom (ex. <code>bob</code>), montant, <b>Payer</b>.</div></div>
-    <p class="c">Mettre à jour : <code>.\update.ps1</code> · Arrêter : <code>.\stop.ps1</code></p>
+    <div class="tip">💡 Si tu modifies une <b>IP</b> dans <code>client/.env</code> <b>après</b> avoir lancé, applique le changement avec <code>.\restart.ps1</code> (un simple redémarrage ne relit pas le <code>.env</code>).</div>
+    <p class="c">Mettre à jour : <code>.\update.ps1</code> · Redémarrer : <code>.\restart.ps1</code> · Arrêter : <code>.\stop.ps1</code></p>
   </div>
 
   <!-- attaquant -->

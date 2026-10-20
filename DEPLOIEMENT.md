@@ -104,8 +104,11 @@ curl http://localhost:8001/health
 
 ---
 
-## 6. Arrêter
+## 6. Arrêter / redémarrer
 
+- **Appliquer un changement de `.env`** (IP, ports, rôle…) après un `start` :
+  `.\restart.ps1` (ou `./restart.sh`) — recrée les conteneurs avec les nouvelles
+  valeurs. ⚠️ `docker restart` seul ne relit PAS le `.env`.
 - **Tout arrêter** (host principal/secours + client + attaquant), en une commande :
   `.\stop.ps1` (ou `./stop.sh`) — les données sont conservées.
 - Arrêter une seule version : depuis son dossier, `docker compose down`
