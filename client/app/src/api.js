@@ -9,8 +9,19 @@ export function clearSession() { try { localStorage.removeItem(TOKEN_KEY); local
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function authH() { const t = getToken(); return t ? { Authorization: `Bearer ${t}` } : {}; }
 
+// Session expirée (JWT 60 min) : on nettoie et on renvoie au login (hors /auth/).
+function handle401(status, path) {
+  if (status === 401 && getToken() && !String(path).startsWith("/auth/")) {
+    clearSession();
+    try { window.location.href = "/"; } catch { /* */ }
+    return true;
+  }
+  return false;
+}
+
 async function jpost(path, body, headers = {}) {
   const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(body) });
+  if (handle401(r.status, path)) return new Promise(() => {});
   if (!r.ok) { const e = await r.json().catch(() => ({ detail: r.statusText })); throw new Error(e.detail || `HTTP ${r.status}`); }
   return r.json();
 }
@@ -18,8 +29,8 @@ async function jpost(path, body, headers = {}) {
 export const login = (username, password) => jpost("/auth/login", { username, password });
 export const register = (username, password) => jpost("/auth/register", { username, password });
 
-export async function getAccount() { const r = await fetch("/api/accounts/me", { headers: authH() }); if (!r.ok) throw new Error("compte indisponible"); return r.json(); }
-export async function listTx() { const r = await fetch("/api/transactions", { headers: authH() }); if (!r.ok) throw new Error("historique indisponible"); return r.json(); }
+export async function getAccount() { const r = await fetch("/api/accounts/me", { headers: authH() }); if (handle401(r.status, "/api/accounts/me")) return null; if (!r.ok) throw new Error("compte indisponible"); return r.json(); }
+export async function listTx() { const r = await fetch("/api/transactions", { headers: authH() }); if (handle401(r.status, "/api/transactions")) return []; if (!r.ok) throw new Error("historique indisponible"); return r.json(); }
 export async function searchUsers(q) { const r = await fetch("/api/users?q=" + encodeURIComponent(q), { headers: authH() }); if (!r.ok) return []; return r.json(); }
 
 // ---- Destinataires favoris (paiement en un clic) ----
@@ -37,8 +48,12 @@ export const savingsWithdraw = (amount) => jpost("/api/savings/withdraw", { amou
 
 // ---- Jeu idle : fortune, livrets, shop, leaderboard, mail, enchères, quiz, chat, dino ----
 async function jget(path, fallback) {
-  try { const r = await fetch(path, { headers: authH(), cache: "no-store" }); if (!r.ok) return fallback; return r.json(); }
-  catch { return fallback; }
+  try {
+    const r = await fetch(path, { headers: authH(), cache: "no-store" });
+    if (handle401(r.status, path)) return fallback;
+    if (!r.ok) return fallback;
+    return r.json();
+  } catch { return fallback; }
 }
 export const getNetworth = () => jget("/api/me/networth", null);
 export const getLeaderboard = () => jget("/api/leaderboard", { board: [], target: 1000000, winner: null });
