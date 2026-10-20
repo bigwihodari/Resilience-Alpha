@@ -1,0 +1,62 @@
+# Overlay HAUTE DISPONIBILITE pour Resilience Guard.
+#
+# S'ajoute à docker-compose.module.yml : met une 2e passerelle de secours
+# (gateway-backup) derrière un reverse-proxy de bascule (ha-proxy) qui devient le
+# point d'entrée public (port 8080). Le principal sert ; sur panne, bascule auto
+# sur le secours, puis retour auto. Prometheus scrape les deux passerelles.
+#
+#   cd module
+#   docker compose -f docker-compose.module.yml -f docker-compose.ha.yml up -d --build
+#
+# Démo bascule :  docker stop rg-gateway   (le service continue via le secours)
+#                 docker start rg-gateway   (retour automatique au principal)
+
+services:
+  # Le principal passe en interne (le point d'entrée public devient ha-proxy).
+  gateway:
+    ports: !reset []
+    environment:
+      NODE_ID: primary
+
+  # 2e passerelle (secours) — même image, identité « backup ».
+  gateway-backup:
+    build: ./gateway
+    container_name: rg-gateway-backup
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      PROTECTED_UPSTREAM: ${PROTECTED_UPSTREAM:-http://host.docker.internal:8090}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-orchestrator-admin-token}
+      SHED_RATE: ${SHED_RATE:-8.0}
+      UPSTREAM_TIMEOUT: ${UPSTREAM_TIMEOUT:-15}
+      NODE_ID: backup
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks: [guard]
+    restart: unless-stopped
+
+  # Reverse-proxy de bascule : point d'entrée public (8080) devant les 2 passerelles.
+  ha-proxy:
+    image: nginx:1.27-alpine
+    container_name: rg-ha-proxy
+    volumes:
+      - ./ha/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "${GATEWAY_PORT:-8080}:80"
+    depends_on:
+      - gateway
+      - gateway-backup
+    networks: [guard]
+    restart: unless-stopped
+
+  # Le canari et le bouclier passent par le point d'entrée HA (prouve la bascule).
+  orchestrator:
+    environment:
+      GATEWAY_URL: http://ha-proxy:80
+
+  # Prometheus scrape les DEUX passerelles (voir prometheus-ha.yml).
+  # !override remplace entièrement la liste de volumes de base (sinon les deux
+  # fichiers de conf seraient montés sur la même cible).
+  prometheus:
+    volumes: !override
+      - ./prometheus/prometheus-ha.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus

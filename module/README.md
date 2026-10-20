@@ -77,10 +77,12 @@ Pour une app **non-dockerisée**, `PROTECTED_UPSTREAM` peut pointer vers son URL
 module/
   README.md                    (ce fichier)
   docker-compose.module.yml    (overlay : gateway + stack défensive + cockpit)
+  docker-compose.ha.yml        (overlay HA : 2e passerelle secours + bascule)
   .env.example                 (PROTECTED_UPSTREAM, ports, tokens, modèle LLM)
   gateway/                     (passerelle WAF + métriques — FastAPI + httpx)
+  ha/                          (reverse-proxy nginx de bascule principal/secours)
   detector/ orchestrator/ assistant/   (réutilisés, pointés sur la gateway)
-  prometheus/ grafana/ loki/   (configs d'observabilité)
+  prometheus/ grafana/ loki/   (configs d'observabilité ; prometheus-ha.yml pour la HA)
   cockpit/                     (dashboard du module, SANS jeu)
 demo-apps/
   paiement/                    (démo de paiement SANS les add-ons de jeu)
@@ -94,6 +96,27 @@ FastAPI + httpx. Pour chaque requête : (1) WAF sur path/query/corps (signatures
 `PROTECTED_UPSTREAM`, (4) mesure latence + statut. Expose `/metrics` (Prometheus) avec
 `http_requests_total{status}`, `http_request_duration_seconds_bucket`, `waf_blocked_total`,
 et `/health`. Aucune dépendance à l'app protégée.
+
+## Haute disponibilité (`docker-compose.ha.yml`)
+Overlay qui ajoute une **2ᵉ passerelle de secours** (`gateway-backup`, même image, identité
+`NODE_ID=backup`) derrière un **reverse-proxy nginx de bascule** (`ha/nginx.conf`). Ce proxy
+devient le point d'entrée public (port 8080) : le principal sert, et sur panne (`error` /
+`timeout` / `502` / `503` / `504`) nginx bascule **automatiquement** sur le secours
+(`proxy_next_upstream`), puis y revient dès que le principal répond. Prometheus scrape les
+**deux** passerelles (`prometheus/prometheus-ha.yml`). Le cockpit affiche la section
+**« Haute disponibilité »** : quel nœud sert (via `/health` → `node`), santé principal/secours,
+et une bannière quand la bascule est active.
+
+```bash
+cd module
+docker compose -f docker-compose.module.yml -f docker-compose.ha.yml up -d --build
+# démo bascule :
+docker stop rg-gateway     # le service continue via le secours (cockpit : « bascule active »)
+docker start rg-gateway    # retour automatique au principal
+```
+
+> L'orchestrateur pointe son canari/bouclier sur le point d'entrée HA (`ha-proxy`) : la
+> vérification prouve que le service répond même pendant une bascule.
 
 ## Démo du workshop
 1. Lancer une app démo (`demo-apps/paiement` ou `demo-apps/vitrine`).

@@ -29,6 +29,10 @@ from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_
 # --- Configuration (tout par variables d'environnement, aucune valeur « jeu ») ---
 PROTECTED_UPSTREAM = os.environ.get("PROTECTED_UPSTREAM", "http://host.docker.internal:8000").rstrip("/")
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "orchestrator-admin-token")
+# Identité du nœud (haute disponibilité) : « primary » ou « backup ». Exposée dans
+# /health et dans l'en-tête X-RG-Node de chaque réponse pour que le cockpit sache
+# quel nœud sert réellement le trafic (et détecte une bascule).
+NODE_ID = os.environ.get("NODE_ID", "primary")
 UPSTREAM_TIMEOUT = float(os.environ.get("UPSTREAM_TIMEOUT", "15"))
 DEFAULT_SHED_RATE = float(os.environ.get("SHED_RATE", "8.0"))
 
@@ -101,6 +105,14 @@ app = FastAPI(title="Resilience Guard — Passerelle (WAF + proxy + métriques)"
 _client: httpx.AsyncClient | None = None
 
 
+@app.middleware("http")
+async def _tag_node(request: Request, call_next):
+    """Marque chaque réponse avec l'identité du nœud (HA : qui a servi la requête)."""
+    response = await call_next(request)
+    response.headers["X-RG-Node"] = NODE_ID
+    return response
+
+
 @app.on_event("startup")
 async def _startup():
     global _client
@@ -117,8 +129,8 @@ async def _shutdown():
 # --- Endpoints de gestion de la passerelle (non proxifiés) ---
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "gateway", "upstream": PROTECTED_UPSTREAM,
-            "shield": _protect["enabled"]}
+    return {"status": "ok", "service": "gateway", "node": NODE_ID,
+            "upstream": PROTECTED_UPSTREAM, "shield": _protect["enabled"]}
 
 
 @app.get("/metrics")

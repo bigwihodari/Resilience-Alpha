@@ -123,6 +123,10 @@
     <div class="timeline" id="rem-timeline"></div>
   </div>
 
+  <h2>Haute disponibilité</h2>
+  <div id="ha-banner" style="margin-bottom:10px"></div>
+  <div class="grid g3" id="ha-nodes"></div>
+
   <h2>Assistant IA (RAG, local)</h2>
   <div class="card">
     <div class="ask">
@@ -268,6 +272,49 @@ async function refresh() {
   document.getElementById("kpi-shield").innerHTML = shieldOn
     ? '<span class="badge b-warn">&#128737;&#65039; actif</span>'
     : '<span class="badge b-ok">inactif</span>';
+
+  renderHA();
+}
+
+// Haute disponibilité : qui sert (point d'entrée) + santé principal/secours.
+async function fetchNode(path) {
+  try {
+    const r = await fetch(path, { cache: "no-store" });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+async function renderHA() {
+  const [entry, primary, backup] = await Promise.all([
+    fetchNode("/ha/entry"), fetchNode("/ha/primary"), fetchNode("/ha/backup"),
+  ]);
+  const banner = document.getElementById("ha-banner");
+  // Le point d'entrée HA (ha-proxy) n'existe qu'en mode haute dispo.
+  if (!entry && !backup) {
+    banner.innerHTML = '<div class="card" style="color:var(--muted)">Mode passerelle simple — haute disponibilité non activée. '
+      + 'Lancer l\'overlay <code>docker-compose.ha.yml</code> pour la bascule principal/secours.</div>';
+    document.getElementById("ha-nodes").innerHTML = "";
+    return;
+  }
+  const serving = entry?.node || "—";
+  const onBackup = serving === "backup";
+  banner.innerHTML = onBackup
+    ? '<div class="card" style="border-color:#5a3a2a;background:rgba(224,168,61,.12)"><span class="badge b-warn">&#8635; BASCULE ACTIVE</span> '
+      + 'Le nœud <b>secours</b> assure le service — le principal est injoignable.</div>'
+    : '<div class="card"><span class="badge b-ok">&#10003; Nominal</span> Le nœud <b>principal</b> assure le service.</div>';
+
+  const card = (title, online, subtitle, serves) => {
+    const dot = online ? "on" : "off";
+    return `<div class="card"><div class="label">${title}</div>
+      <div class="svc" style="margin-top:8px"><span class="s ${dot}"></span>
+        <div><div class="n">${online ? "en ligne" : "hors ligne"}</div>
+        <div class="st">${subtitle}</div></div></div>
+      ${serves ? '<div style="margin-top:8px"><span class="badge b-acc">&#9654; sert le trafic</span></div>' : ''}</div>`;
+  };
+  document.getElementById("ha-nodes").innerHTML =
+      card("Point d'entrée (bascule)", !!entry, entry ? ("achemine vers « " + serving + " »") : "ne répond pas", false)
+    + card("Passerelle principale", !!primary, primary ? "nœud « " + (primary.node || "?") + " »" : "ne répond pas", serving === "primary")
+    + card("Passerelle secours", !!backup, backup ? "nœud « " + (backup.node || "?") + " »" : "ne répond pas", serving === "backup");
 }
 
 function renderRemediation(rem) {
