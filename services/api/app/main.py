@@ -68,6 +68,24 @@ LIVRET_RATE_GROWTH = 1.18
 LIVRET_RATE_STEP = 0.005      # +0.5 % de taux par niveau de boost
 BASE_LIVRET_SLOTS = 1         # livrets supplémentaires autorisés au départ (hors principal)
 
+# ---- P3.5 : SHOP HACKER (payé avec le butin) — coûts exponentiels ----
+# Chaque upgrade atténue un risque ou augmente une capacité du vol.
+HSHOP = {
+    "stealth":  {"label": "Furtivité", "base": 300.0, "growth": 1.5,
+                 "desc": "Réduit la montée de suspicion et la proba de te faire cramer (-10 %/niv)."},
+    "proxy":    {"label": "Rotation d'IP / proxy", "base": 400.0, "growth": 1.5,
+                 "desc": "Réduit la probabilité de blocage par l'IA (-12 %/niv)."},
+    "toolkit":  {"label": "Boîte à outils", "base": 500.0, "growth": 1.55,
+                 "desc": "Augmente le plafond de vol par coup (+50 %/niv)."},
+    "decoder":  {"label": "Décodeur d'intel", "base": 350.0, "growth": 1.5,
+                 "desc": "Recon plus rapide : -1 sonde requise avant un vol, par niveau (min 1)."},
+}
+
+
+def _hk_level(ukey: str) -> int:
+    with game_lock:
+        return int(game_state.get("hk", {}).get(ukey, 0))
+
 
 def upg_cost(base, growth, level):
     return round(float(base) * (float(growth) ** int(level)), 2)
@@ -92,8 +110,11 @@ repl_state = {"role": ROLE, "name": HA_NAME, "promoted": ROLE == "primary", "pee
 # Tout est fictif / pédagogique. Les retraits du jeu sont PLAFONNÉS et atomiques.
 # ----------------------------------------------------------------------------
 GAME_VICTIM = os.environ.get("GAME_VICTIM", "bob")          # compte client ciblé
-GAME_HEIST_MAX = float(os.environ.get("GAME_HEIST_MAX", "120"))   # plafond PAR retrait (€)
-GAME_LOOT_CAP = float(os.environ.get("GAME_LOOT_CAP", "400"))     # plafond CUMULÉ du butin (€)
+GAME_HEIST_MAX = float(os.environ.get("GAME_HEIST_MAX", "120"))   # plafond PAR retrait hérité (dino-hijack)
+# Plafond CUMULÉ du butin. Dans le jeu idle (course au million), le limiteur n'est
+# plus un petit plafond mais le RISQUE (proba de se faire cramer) ; on autorise donc
+# le butin à monter jusqu'à l'objectif de victoire.
+GAME_LOOT_CAP = float(os.environ.get("GAME_LOOT_CAP", "1000000"))
 GAME_RECON_FOR_HEIST = int(os.environ.get("GAME_RECON_FOR_HEIST", "3"))  # recon requis avant vol
 GAME_SEED_SAVINGS = float(os.environ.get("GAME_SEED_SAVINGS", "300"))    # livret initial de la victime
 # Dégradé/503 des endpoints métier lors d'une bascule (nginx proxy_next_upstream
@@ -124,6 +145,24 @@ def _dino_mult(m) -> int:
     allowed = [a for a in DINO_MULTS if a <= m]
     return max(allowed) if allowed else 1
 
+
+# ---- P3.5 : économie du vol (risque/récompense) ----
+# Vol de la BANQUE (trafficbot) : très rentable, très sécurisé ; cramé = perte
+# TOTALE du butin + long cooldown. Vol de CLIENTS : plus facile, difficulté
+# exponentielle avec la fréquence ET le montant ; cramé = perte ~80 % + claw-back.
+HEIST_BANK_MAX = float(os.environ.get("HEIST_BANK_MAX", "50000"))    # plafond/coup sur la banque
+HEIST_CLIENT_MAX = float(os.environ.get("HEIST_CLIENT_MAX", "2000"))  # plafond/coup sur un client
+HEIST_PVP_MAX = float(os.environ.get("HEIST_PVP_MAX", "5000"))        # plafond/coup sur un attaquant
+CATCH_BANK_BASE = float(os.environ.get("CATCH_BANK_BASE", "0.35"))
+CATCH_BANK_K = float(os.environ.get("CATCH_BANK_K", "0.55"))          # * (montant / plafond banque)
+CATCH_CLIENT_BASE = float(os.environ.get("CATCH_CLIENT_BASE", "0.06"))
+CATCH_CLIENT_K_AMT = float(os.environ.get("CATCH_CLIENT_K_AMT", "0.30"))   # * (montant / plafond client)
+CATCH_CLIENT_K_FREQ = float(os.environ.get("CATCH_CLIENT_K_FREQ", "0.04"))  # * vols clients récents
+CATCH_PVP_BASE = float(os.environ.get("CATCH_PVP_BASE", "0.20"))
+BANK_BURN_COOLDOWN = float(os.environ.get("BANK_BURN_COOLDOWN", "300"))  # 5 min si cramé sur la banque
+CLIENT_FINE_RATE = float(os.environ.get("CLIENT_FINE_RATE", "0.8"))      # perte 80 % du montant visé
+rivals = {}  # handle d'attaquant (hors primaire) -> butin, pour le PvP
+
 game_state = {
     "victim": GAME_VICTIM,
     "loot": 0.0,              # butin courant détenu par l'attaquant (non neutralisé)
@@ -140,6 +179,8 @@ game_state = {
     "recon_needed": GAME_RECON_FOR_HEIST,
     "insider_count": 0,       # nb d'intel « insider » achetés au banquier (traçable IA)
     "dino_hijack": None,      # {"target": username} si un détournement Dino est armé
+    "hk": {},                 # niveaux d'upgrades du shop hacker (stealth/proxy/toolkit/decoder)
+    "client_heists": 0,       # vols de clients récents (fréquence -> difficulté croissante)
 }
 game_lock = threading.Lock()
 degraded = {"on": False}  # bascule : endpoints métier en 503 (gated par GAME_DEGRADE)
@@ -151,6 +192,7 @@ GAME_LOOT = Gauge("game_loot_current", "Butin courant détenu par l'attaquant (j
 GAME_BLOCKED = Gauge("game_blocked", "1 si l'attaquant est bloqué par l'IA (jeu)")
 GAME_INSIDER = Counter("game_insider_total", "Intel « insider » vendu par le banquier (jeu)")
 GAME_DINO_HIJACK = Counter("game_dino_hijack_total", "Tentatives de détournement de gain Dino (jeu)", ["result"])
+GAME_THEFT = Counter("game_theft_total", "Vols par type de cible et résultat (jeu)", ["target_type", "result"])
 
 
 def ha_event(label, kind="info"):
@@ -1687,10 +1729,11 @@ def game_target(body: TargetIn):
     c'est bien un client de rôle 'client'. Changer de cible repart d'une recon
     vierge (les infos fuitées valaient pour l'ancienne cible) ; le butin est conservé."""
     name = (body.username or "").strip()
+    is_rival = name in rivals
     with Session(engine()) as s:
         u = s.scalar(select(User).where(User.username == name))
-        if u is None or (u.role or "client") != "client":
-            raise HTTPException(400, "cible invalide — choisir un compte client existant")
+    if not is_rival and (u is None or (u.role or "client") not in ("client", "bank")):
+        raise HTTPException(400, "cible invalide — un client, la banque ou un attaquant")
     with game_lock:
         changed = name != game_state["victim"]
         game_state["victim"] = name
@@ -1741,50 +1784,150 @@ def game_recon():
             "ready_to_heist": count >= GAME_RECON_FOR_HEIST, **_game_public()}
 
 
+# ---- P3.5 : facteurs des upgrades hacker + probabilités de se faire cramer ----
+def _stealth_factor() -> float:
+    return max(0.1, 1.0 - 0.10 * _hk_level("stealth"))   # furtivité : baisse la proba de catch
+
+
+def _toolkit_factor() -> float:
+    return 1.0 + 0.50 * _hk_level("toolkit")             # boîte à outils : plafond de vol plus haut
+
+
+def _recon_needed() -> int:
+    return max(1, GAME_RECON_FOR_HEIST - _hk_level("decoder"))  # décodeur : moins de recon requise
+
+
+def _catch_client(amount: float) -> float:
+    with game_lock:
+        freq = int(game_state.get("client_heists", 0))
+    p = (CATCH_CLIENT_BASE
+         + CATCH_CLIENT_K_AMT * (amount / max(1.0, HEIST_CLIENT_MAX))
+         + CATCH_CLIENT_K_FREQ * freq) * _stealth_factor()
+    return min(0.95, max(0.02, p))
+
+
+def _catch_bank(amount: float) -> float:
+    p = (CATCH_BANK_BASE + CATCH_BANK_K * (amount / max(1.0, HEIST_BANK_MAX))) * _stealth_factor()
+    return min(0.98, max(0.05, p))
+
+
 class HeistIn(BaseModel):
     amount: float | None = None
-    source: str | None = "courant"   # courant | epargne
+    source: str | None = "courant"   # courant | epargne (cibles clients)
+    target: str | None = None        # cible explicite (sinon la cible courante)
+    target_type: str | None = None   # auto-détecté : client | bank | attacker
 
 
-@app.post("/game/heist")
-def game_heist(body: HeistIn):
-    """Vol PLAFONNÉ sur la cible : retrait atomique (FOR UPDATE), jamais négatif,
-    plafonné par coup (GAME_HEIST_MAX) et en cumulé (GAME_LOOT_CAP). Tracé."""
-    if _cooldown_remaining() > 0:
-        raise HTTPException(403, f"attaquant bloqué — cooldown {_cooldown_remaining()}s")
-    with game_lock:
-        if game_state["recon_count"] < GAME_RECON_FOR_HEIST:
-            raise HTTPException(400, f"reconnaissance insuffisante "
-                                     f"({game_state['recon_count']}/{GAME_RECON_FOR_HEIST})")
-        cap_left = GAME_LOOT_CAP - game_state["loot"] - game_state["loot_neutralized"]
-    if cap_left <= 0:
-        raise HTTPException(400, "plafond de butin atteint — trop risqué d'insister")
-    src = (body.source or "courant").lower()
-    want = body.amount if (body.amount and body.amount > 0) else GAME_HEIST_MAX
-    want = min(want, GAME_HEIST_MAX, cap_left)
-    victim = game_state["victim"]
+@app.get("/game/targets")
+def game_targets():
+    """Toutes les cibles possibles : clients, la banque (coffre), autres attaquants (PvP)."""
     with Session(engine()) as s:
-        u = s.scalar(select(User).where(User.username == victim))
+        clients = list(s.scalars(select(User.username).where(User.role == "client")
+                                 .order_by(User.username)).all())
+        bank = s.scalar(select(User.username).where(User.role == "bank"))
+    with game_lock:
+        rv = [{"handle": h, "loot": round(v, 2)} for h, v in rivals.items()]
+        current = game_state.get("victim")
+    return {"clients": clients, "bank": bank, "attackers": rv, "current": current}
+
+
+def _heist_client(target: str, body: HeistIn):
+    src = (body.source or "courant").lower()
+    want = float(body.amount) if (body.amount and body.amount > 0) else HEIST_CLIENT_MAX
+    want = min(want, HEIST_CLIENT_MAX * _toolkit_factor())
+    with Session(engine()) as s:
+        u = s.scalar(select(User).where(User.username == target))
         acc = s.scalar(select(Account).where(Account.user_id == u.id).with_for_update()) if u else None
         if acc is None:
             raise HTTPException(404, "cible introuvable")
+        avail = float(acc.savings if src == "epargne" else acc.balance)
+        stolen = round(min(want, avail), 2)
+        if stolen <= 0:
+            raise HTTPException(402, "compte/livret vide — rien à exfiltrer")
         if src == "epargne":
-            avail = float(acc.savings)
-            stolen = round(min(want, avail), 2)
-            if stolen <= 0:
-                raise HTTPException(402, "livret vide — rien à exfiltrer")
             acc.savings = float(acc.savings) - stolen
-            label = "⚠ EXFILTRATION LIVRET (jeu)"
         else:
-            avail = float(acc.balance)
-            stolen = round(min(want, avail), 2)
-            if stolen <= 0:
-                raise HTTPException(402, "compte vide — rien à exfiltrer")
             acc.balance = float(acc.balance) - stolen
-            label = "⚠ EXFILTRATION (jeu)"
         s.add(Transaction(account_id=acc.id, amount=stolen, type="debit",
-                          recipient=label, status="completed"))
+                          recipient="⚠ EXFILTRATION" + (" LIVRET" if src == "epargne" else "") + " (jeu)",
+                          status="completed"))
+        caught = random.random() <= _catch_client(stolen)
+        if caught:  # claw-back immédiat : la victime est remboursée
+            if src == "epargne":
+                acc.savings = float(acc.savings) + stolen
+            else:
+                acc.balance = float(acc.balance) + stolen
+            s.add(Transaction(account_id=acc.id, amount=stolen, type="credit",
+                              recipient="✓ CLAW-BACK (vol déjoué)", status="completed"))
         s.commit()
+    if caught:
+        fine = round(CLIENT_FINE_RATE * stolen, 2)
+        with game_lock:
+            game_state["loot"] = round(max(0.0, game_state["loot"] - fine), 2)
+            game_state["loot_neutralized"] = round(game_state["loot_neutralized"] + stolen, 2)
+            game_state["client_heists"] = int(game_state.get("client_heists", 0)) + 1
+            loot = game_state["loot"]
+        GAME_THEFT.labels(target_type="client", result="caught").inc()
+        GAME_LOOT.set(loot)
+        print(f"[GAME] HEIST CLIENT CAUGHT target={target} stolen={stolen} fine={fine} loot={loot}", flush=True)
+        ws_manager.publish({"type": "tx", "from": target, "to": "✓ DÉFENSE", "amount": stolen, "op": "clawback"})
+        return {"ok": False, "caught": True, "target": target, "target_type": "client",
+                "attempted": stolen, "fine": fine, "loot": loot,
+                "message": f"Cramé ! Vol déjoué, {target} remboursé, amende {fine:.0f} € sur ton butin.",
+                **_game_public()}
+    with game_lock:
+        game_state["loot"] = round(game_state["loot"] + stolen, 2)
+        game_state["exfiltrated_total"] = round(game_state["exfiltrated_total"] + stolen, 2)
+        game_state["heist_count"] += 1
+        game_state["client_heists"] = int(game_state.get("client_heists", 0)) + 1
+        loot = game_state["loot"]
+    GAME_HEIST.inc()
+    GAME_HEIST_AMT.inc(stolen)
+    GAME_THEFT.labels(target_type="client", result="success").inc()
+    GAME_LOOT.set(loot)
+    print(f"[GAME] HEIST CLIENT target={target} src={src} stolen={stolen} loot={loot}", flush=True)
+    ws_manager.publish({"type": "tx", "from": target, "to": "⚠ INCONNU", "amount": stolen, "op": "heist"})
+    _check_win()
+    return {"ok": True, "caught": False, "target": target, "target_type": "client",
+            "stolen": stolen, "source": src, "loot": loot, **_game_public()}
+
+
+def _heist_bank(target: str, body: HeistIn):
+    want = float(body.amount) if (body.amount and body.amount > 0) else HEIST_BANK_MAX
+    want = min(want, HEIST_BANK_MAX * _toolkit_factor())
+    with Session(engine()) as s:
+        u = s.scalar(select(User).where(User.username == target))
+        acc = s.scalar(select(Account).where(Account.user_id == u.id).with_for_update()) if u else None
+        if acc is None:
+            raise HTTPException(404, "coffre introuvable")
+        stolen = round(min(want, float(acc.balance)), 2)
+        if stolen <= 0:
+            raise HTTPException(402, "coffre vide — rien à exfiltrer")
+        acc.balance = float(acc.balance) - stolen
+        s.add(Transaction(account_id=acc.id, amount=stolen, type="debit",
+                          recipient="⚠ BRAQUAGE BANQUE (jeu)", status="completed"))
+        caught = random.random() <= _catch_bank(stolen)
+        if caught:  # alarme du coffre : la banque est remboursée
+            acc.balance = float(acc.balance) + stolen
+            s.add(Transaction(account_id=acc.id, amount=stolen, type="credit",
+                              recipient="✓ ALARME COFFRE (braquage déjoué)", status="completed"))
+        s.commit()
+    if caught:
+        with game_lock:
+            lost = game_state["loot"]
+            game_state["loot_neutralized"] = round(game_state["loot_neutralized"] + lost, 2)
+            game_state["loot"] = 0.0
+            game_state["blocked_until"] = time.time() + BANK_BURN_COOLDOWN
+            game_state["block_reason"] = "braquage de la banque repéré — perte totale du butin"
+        GAME_THEFT.labels(target_type="bank", result="caught").inc()
+        GAME_LOOT.set(0)
+        GAME_BLOCKED.set(1)
+        print(f"[GAME] HEIST BANK CAUGHT target={target} attempted={stolen} lost_all={lost}", flush=True)
+        ws_manager.publish({"type": "tx", "from": target, "to": "✓ DÉFENSE", "amount": stolen, "op": "bankfail"})
+        return {"ok": False, "caught": True, "target": target, "target_type": "bank",
+                "attempted": stolen, "loot": 0.0, "lost_all": round(lost, 2),
+                "message": f"CRAMÉ sur la banque ! Butin perdu en TOTALITÉ ({lost:.0f} €) "
+                           f"+ cooldown {int(BANK_BURN_COOLDOWN)}s.", **_game_public()}
     with game_lock:
         game_state["loot"] = round(game_state["loot"] + stolen, 2)
         game_state["exfiltrated_total"] = round(game_state["exfiltrated_total"] + stolen, 2)
@@ -1792,10 +1935,112 @@ def game_heist(body: HeistIn):
         loot = game_state["loot"]
     GAME_HEIST.inc()
     GAME_HEIST_AMT.inc(stolen)
+    GAME_THEFT.labels(target_type="bank", result="success").inc()
     GAME_LOOT.set(loot)
-    print(f"[GAME] HEIST victim={victim} source={src} stolen={stolen} loot={loot}", flush=True)
-    ws_manager.publish({"type": "tx", "from": victim, "to": "⚠ INCONNU", "amount": stolen, "op": "heist"})
-    return {"ok": True, "stolen": stolen, "source": src, "loot": loot, **_game_public()}
+    print(f"[GAME] HEIST BANK target={target} stolen={stolen} loot={loot}", flush=True)
+    ws_manager.publish({"type": "tx", "from": "BANQUE", "to": "⚠ INCONNU", "amount": stolen, "op": "heist"})
+    _check_win()
+    return {"ok": True, "caught": False, "target": target, "target_type": "bank",
+            "stolen": stolen, "loot": loot, **_game_public()}
+
+
+def _heist_pvp(target: str):
+    with game_lock:
+        rival = float(rivals.get(target, 0.0))
+    if rival <= 0:
+        raise HTTPException(402, f"« {target} » n'a pas de butin à voler")
+    stolen = round(min(rival, HEIST_PVP_MAX * _toolkit_factor()), 2)
+    caught = random.random() <= (CATCH_PVP_BASE * _stealth_factor())
+    if caught:
+        with game_lock:
+            fine = round(0.5 * stolen, 2)
+            game_state["loot"] = round(max(0.0, game_state["loot"] - fine), 2)
+            loot = game_state["loot"]
+        GAME_THEFT.labels(target_type="attacker", result="caught").inc()
+        GAME_LOOT.set(loot)
+        return {"ok": False, "caught": True, "target": target, "target_type": "attacker",
+                "attempted": stolen, "loot": loot,
+                "message": f"Contre-hack de « {target} » ! Tu perds {fine:.0f} €.", **_game_public()}
+    with game_lock:
+        rivals[target] = round(max(0.0, rivals.get(target, 0.0) - stolen), 2)
+        game_state["loot"] = round(game_state["loot"] + stolen, 2)
+        game_state["exfiltrated_total"] = round(game_state["exfiltrated_total"] + stolen, 2)
+        game_state["heist_count"] += 1
+        loot = game_state["loot"]
+    GAME_HEIST.inc()
+    GAME_HEIST_AMT.inc(stolen)
+    GAME_THEFT.labels(target_type="attacker", result="success").inc()
+    GAME_LOOT.set(loot)
+    print(f"[GAME] HEIST PVP from={target} stolen={stolen} loot={loot}", flush=True)
+    _check_win()
+    return {"ok": True, "caught": False, "target": target, "target_type": "attacker",
+            "stolen": stolen, "loot": loot, **_game_public()}
+
+
+@app.post("/game/heist")
+def game_heist(body: HeistIn):
+    """Vol généralisé (P3/P3.5) : cible CLIENT, BANQUE (coffre) ou ATTAQUANT (PvP).
+    Retrait atomique (FOR UPDATE, jamais négatif) + risque de se faire cramer :
+    - banque : très rentable, très risqué ; cramé = perte TOTALE du butin + cooldown 5 min ;
+    - client : plus facile, difficulté exp. (fréquence+montant) ; cramé = perte 80 % + claw-back ;
+    - attaquant : PvP, vole le butin d'un rival.
+    Tout est tracé (game_theft_total{target_type,result})."""
+    if _cooldown_remaining() > 0:
+        raise HTTPException(403, f"attaquant bloqué — cooldown {_cooldown_remaining()}s")
+    target = (body.target or game_state.get("victim") or "").strip()
+    if not target:
+        raise HTTPException(400, "aucune cible sélectionnée")
+    # PvP : cible = un autre attaquant
+    if (body.target_type or "").lower() == "attacker" or target in rivals:
+        return _heist_pvp(target)
+    with Session(engine()) as s:
+        tu = s.scalar(select(User).where(User.username == target))
+        if tu is None:
+            raise HTTPException(404, "cible introuvable")
+        role = tu.role or "client"
+    # recon requise (atténuée par le décodeur) pour clients et banque
+    need = _recon_needed()
+    with game_lock:
+        rc = game_state["recon_count"]
+    if rc < need:
+        raise HTTPException(400, f"reconnaissance insuffisante ({rc}/{need})")
+    if role == "bank" or target == BANK_USER:
+        return _heist_bank(target, body)
+    if role != "client":
+        raise HTTPException(400, "cible non volable")
+    return _heist_client(target, body)
+
+
+# ---- P3.5 : SHOP HACKER (payé avec le butin) ----
+@app.get("/game/shop")
+def game_shop():
+    with game_lock:
+        hk = dict(game_state.get("hk", {}))
+        loot = game_state["loot"]
+    items = [{"ukey": k, "label": c["label"], "desc": c["desc"], "level": int(hk.get(k, 0)),
+              "next_cost": upg_cost(c["base"], c["growth"], int(hk.get(k, 0)))}
+             for k, c in HSHOP.items()]
+    return {"loot": loot, "items": items}
+
+
+@app.post("/game/shop/buy")
+def game_shop_buy(body: BuyIn):
+    """Achat d'une upgrade hacker (payée avec le butin), coût exponentiel."""
+    cfg = HSHOP.get(body.ukey)
+    if cfg is None:
+        raise HTTPException(404, "upgrade inconnue")
+    with game_lock:
+        lvl = int(game_state.get("hk", {}).get(body.ukey, 0))
+        cost = upg_cost(cfg["base"], cfg["growth"], lvl)
+        if game_state["loot"] < cost:
+            raise HTTPException(402, f"butin insuffisant (coût {cost:.0f} €)")
+        game_state["loot"] = round(game_state["loot"] - cost, 2)
+        game_state.setdefault("hk", {})[body.ukey] = lvl + 1
+        loot = game_state["loot"]
+    GAME_LOOT.set(loot)
+    print(f"[GAME] HACKER-SHOP buy {body.ukey} -> lvl {lvl + 1} (paid {cost}) loot={loot}", flush=True)
+    return {"ok": True, "ukey": body.ukey, "level": lvl + 1, "paid": cost,
+            "next_cost": upg_cost(cfg["base"], cfg["growth"], lvl + 1), "loot": loot}
 
 
 @app.post("/game/admin/block")
@@ -1846,7 +2091,8 @@ def game_reset(x_admin_token: str = Header(default=None)):
         game_state.update({"victim": GAME_VICTIM, "loot": 0.0, "loot_neutralized": 0.0,
                            "exfiltrated_total": 0.0, "recon_count": 0, "heist_count": 0,
                            "intel": [], "discovered": [], "blocked_until": 0.0, "block_reason": "",
-                           "insider_count": 0, "dino_hijack": None})
+                           "insider_count": 0, "dino_hijack": None, "hk": {}, "client_heists": 0})
+        rivals.clear()
     GAME_LOOT.set(0)
     GAME_BLOCKED.set(0)
     return _game_public()
