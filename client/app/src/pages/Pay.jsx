@@ -20,7 +20,22 @@ export default function Pay() {
       setAccount(acc); setTxs(list);
     } catch (e) { setMsg({ type: "err", text: e.message }); }
   }
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => {
+    refresh();
+    // Temps réel : à chaque transaction poussée par le serveur, on rafraîchit (sans refresh manuel).
+    let ws, stopped = false, retry;
+    const connect = () => {
+      try {
+        const proto = location.protocol === "https:" ? "wss" : "ws";
+        ws = new WebSocket(`${proto}://${location.host}/ws`);
+        ws.onmessage = (e) => { try { if (JSON.parse(e.data).type === "tx") refresh(); } catch { /* */ } };
+        ws.onclose = () => { if (!stopped) retry = setTimeout(connect, 2000); }; // reconnexion (ex. bascule)
+        ws.onerror = () => { try { ws.close(); } catch { /* */ } };
+      } catch { retry = setTimeout(connect, 2000); }
+    };
+    connect();
+    return () => { stopped = true; clearTimeout(retry); try { ws && ws.close(); } catch { /* */ } };
+  }, []);
 
   async function doSearch(v) {
     setQ(v);

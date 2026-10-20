@@ -19,7 +19,22 @@ export default function Payment() {
     }
   }
 
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => {
+    refresh();
+    // Temps réel : rafraîchit à chaque transaction poussée par le serveur (WebSocket).
+    let ws, stopped = false, retry;
+    const connect = () => {
+      try {
+        const proto = location.protocol === "https:" ? "wss" : "ws";
+        ws = new WebSocket(`${proto}://${location.host}/ws`);
+        ws.onmessage = (e) => { try { if (JSON.parse(e.data).type === "tx") refresh(); } catch { /* */ } };
+        ws.onclose = () => { if (!stopped) retry = setTimeout(connect, 2000); };
+        ws.onerror = () => { try { ws.close(); } catch { /* */ } };
+      } catch { retry = setTimeout(connect, 2000); }
+    };
+    connect();
+    return () => { stopped = true; clearTimeout(retry); try { ws && ws.close(); } catch { /* */ } };
+  }, []);
 
   async function pay(e) {
     e.preventDefault();

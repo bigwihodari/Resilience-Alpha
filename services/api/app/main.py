@@ -7,12 +7,14 @@ détection ML et la supervision).
 import os
 import re
 import time
+import json
+import asyncio
 import threading
 import datetime as dt
 
 import jwt
 import requests
-from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi import FastAPI, HTTPException, Depends, Header, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from sqlalchemy import (
     create_engine, Integer, String, Numeric, ForeignKey, DateTime, func, select, text,
@@ -127,6 +129,57 @@ def current_user(authorization: str = Header(default=None)) -> str:
 app = FastAPI(title="Resilience-Alpha — Payment API")
 
 
+# ---------------- Temps réel (WebSocket) ----------------
+class WSManager:
+    """Diffuse les événements de transaction aux clients connectés (live, sans refresh)."""
+    def __init__(self):
+        self.active = set()
+        self.loop = None
+
+    async def connect(self, ws: WebSocket):
+        await ws.accept()
+        self.active.add(ws)
+
+    def disconnect(self, ws):
+        self.active.discard(ws)
+
+    async def _broadcast(self, msg: str):
+        for ws in list(self.active):
+            try:
+                await ws.send_text(msg)
+            except Exception:  # noqa: BLE001
+                self.active.discard(ws)
+
+    def publish(self, event: dict):
+        """Appelable depuis un thread sync (handler HTTP) : planifie la diffusion."""
+        if self.loop is None:
+            return
+        try:
+            asyncio.run_coroutine_threadsafe(self._broadcast(json.dumps(event)), self.loop)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+ws_manager = WSManager()
+
+
+@app.on_event("startup")
+async def _capture_loop():
+    ws_manager.loop = asyncio.get_running_loop()
+
+
+@app.websocket("/ws")
+async def ws_events(ws: WebSocket):
+    await ws_manager.connect(ws)
+    try:
+        while True:
+            await ws.receive_text()  # garde la connexion ouverte (ping/keepalive)
+    except WebSocketDisconnect:
+        ws_manager.disconnect(ws)
+    except Exception:  # noqa: BLE001
+        ws_manager.disconnect(ws)
+
+
 class TxIn(BaseModel):
     amount: float
     recipient: str | None = None           # username de l'ami à payer (ou marchand externe)
@@ -213,6 +266,8 @@ def create_transaction(body: TxIn, user: str = Depends(current_user)):
                         "recipient": prior.recipient, "new_balance": float(acc.balance),
                         "resumed": True}
             raise
+        ws_manager.publish({"type": "tx", "from": user, "to": body.recipient or "",
+                            "amount": body.amount})
         return {"id": tx.id, "status": "completed", "amount": body.amount,
                 "recipient": body.recipient, "credited": credited,
                 "new_balance": float(acc.balance), "resumed": False}
