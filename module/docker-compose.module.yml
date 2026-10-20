@@ -1,0 +1,183 @@
+# Resilience Guard — overlay « plug-and-protect ».
+#
+# Lance la passerelle (WAF + proxy + métriques) DEVANT votre application, plus toute
+# la stack défensive (observabilité, détection ML, remédiation, assistant, cockpit).
+# L'app à protéger n'est PAS décrite ici : on pointe seulement PROTECTED_UPSTREAM vers
+# elle (voir .env.example). Démarrage :
+#
+#   cd module
+#   cp .env.example .env            # puis ajuster PROTECTED_UPSTREAM
+#   docker compose -f docker-compose.module.yml up -d --build
+#
+# Cockpit : http://localhost:8088   Grafana : http://localhost:3000   App servie : http://localhost:8080
+
+services:
+  # --- Passerelle : seul point d'entrée, protège et supervise l'app amont ---
+  gateway:
+    build: ./gateway
+    container_name: rg-gateway
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      PROTECTED_UPSTREAM: ${PROTECTED_UPSTREAM:-http://host.docker.internal:8090}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-orchestrator-admin-token}
+      SHED_RATE: ${SHED_RATE:-8.0}
+      UPSTREAM_TIMEOUT: ${UPSTREAM_TIMEOUT:-15}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${GATEWAY_PORT:-8080}:8080"
+    networks: [guard]
+    restart: unless-stopped
+
+  # --- Observabilité ---
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: rg-prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=2h"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    networks: [guard]
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:3.2.1
+    container_name: rg-loki
+    command: -config.file=/etc/loki/loki-config.yml
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki_data:/loki
+    ports:
+      - "${LOKI_PORT:-3100}:3100"
+    networks: [guard]
+    restart: unless-stopped
+
+  promtail:
+    image: grafana/promtail:3.2.1
+    container_name: rg-promtail
+    command: -config.file=/etc/promtail/promtail-config.yml
+    volumes:
+      - ./promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+    networks: [guard]
+    restart: unless-stopped
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: rg-cadvisor
+    privileged: true
+    devices:
+      - /dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    # Pas de port publié (conflit connu 8081) : Prometheus scrape cadvisor:8080 en interne.
+    expose:
+      - "8080"
+    networks: [guard]
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.3.1
+    container_name: rg-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_USERS_DEFAULT_THEME: light
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - loki
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    networks: [guard]
+    restart: unless-stopped
+
+  # --- Détection IA + remédiation autonome ---
+  detector:
+    build: ./detector
+    container_name: rg-detector
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      PROM_URL: http://prometheus:9090
+      INTERVAL: "5"
+      WARMUP_SAMPLES: ${WARMUP_SAMPLES:-30}
+      CONTAMINATION: "0.02"
+      MODEL_PATH: /app/model/detector.joblib
+    volumes:
+      - detector_model:/app/model
+    depends_on:
+      - prometheus
+    networks: [guard]
+    restart: unless-stopped
+
+  orchestrator:
+    build: ./orchestrator
+    container_name: rg-orchestrator
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      DETECTOR_URL: http://detector:8000
+      GATEWAY_URL: http://gateway:8080
+      PROM_URL: http://prometheus:9090
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-orchestrator-admin-token}
+      SHED_RATE: ${SHED_RATE:-8.0}
+    depends_on:
+      - detector
+      - gateway
+    networks: [guard]
+    restart: unless-stopped
+
+  assistant:
+    build: ./assistant
+    container_name: rg-assistant
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      LLM_MODEL: ${LLM_MODEL:-qwen2.5:7b-instruct-q4_K_M}
+      EMB_MODEL: ${EMB_MODEL:-nomic-embed-text}
+      KNOWLEDGE_DIR: /app/knowledge
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./assistant/knowledge:/app/knowledge/module:ro
+      - ./README.md:/app/knowledge/README.md:ro
+    networks: [guard]
+    restart: unless-stopped
+
+  # --- Cockpit (dashboard du module, SANS jeu) ---
+  cockpit:
+    build: ./cockpit
+    container_name: rg-cockpit
+    depends_on:
+      - prometheus
+      - orchestrator
+      - detector
+      - assistant
+    ports:
+      - "${COCKPIT_PORT:-8088}:80"
+    networks: [guard]
+    restart: unless-stopped
+
+volumes:
+  prometheus_data:
+  loki_data:
+  grafana_data:
+  detector_model:
+
+networks:
+  guard:
+    driver: bridge

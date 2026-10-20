@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Resilience Guard — Cockpit</title>
+<style>
+  :root {
+    --bg: #0f1221; --panel: #181c30; --panel2: #1f2440; --ink: #e8eaf6;
+    --muted: #9aa0c3; --line: #2a2f4d; --accent: #7c6cff; --ok: #35c28a;
+    --warn: #e0a83d; --bad: #e5604d; --purple: #b388ff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 20px 16px 60px; }
+  header { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; flex-wrap: wrap; }
+  h1 { font-size: 20px; margin: 0; letter-spacing: .3px; }
+  .shield { font-size: 22px; }
+  .live { margin-left: auto; display: inline-flex; align-items: center; gap: 8px;
+    font-size: 13px; background: var(--panel); padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--ok); animation: pulse 1.6s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .12em; color: var(--purple);
+    margin: 26px 0 10px; }
+  .grid { display: grid; gap: 12px; }
+  .g4 { grid-template-columns: repeat(4, 1fr); }
+  .g3 { grid-template-columns: repeat(3, 1fr); }
+  .g2 { grid-template-columns: repeat(2, 1fr); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+  .label { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+  .value { font-size: 28px; font-weight: 800; margin-top: 4px; }
+  .unit { font-size: 14px; font-weight: 600; color: var(--muted); margin-left: 3px; }
+  .svc { display: flex; align-items: center; gap: 10px; }
+  .svc .s { width: 11px; height: 11px; border-radius: 50%; flex: none; }
+  .s.on { background: var(--ok); } .s.off { background: var(--bad); }
+  .svc .n { font-size: 13px; font-weight: 600; }
+  .svc .st { font-size: 11px; color: var(--muted); }
+  .chart-title { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+  svg.spark { width: 100%; height: 90px; display: block; }
+  .anom { text-align: center; }
+  .anom .big { font-size: 46px; font-weight: 900; margin: 6px 0; }
+  .badge { display: inline-block; font-size: 12px; font-weight: 700; padding: 5px 12px; border-radius: 999px; }
+  .b-ok { background: rgba(53,194,138,.16); color: var(--ok); }
+  .b-warn { background: rgba(224,168,61,.16); color: var(--warn); }
+  .b-bad { background: rgba(229,96,77,.16); color: var(--bad); }
+  .b-acc { background: rgba(124,108,255,.18); color: var(--purple); }
+  .stepper { display: flex; gap: 8px; margin: 10px 0 14px; }
+  .stepper .step { flex: 1; text-align: center; }
+  .stepper .bar { height: 6px; border-radius: 999px; background: var(--panel2); }
+  .stepper .bar.on { background: var(--accent); }
+  .stepper .t { font-size: 11px; margin-top: 5px; color: var(--muted); }
+  .stepper .t.on { color: var(--purple); font-weight: 700; }
+  .timeline { max-height: 240px; overflow: auto; font-size: 13px; }
+  .ev { display: flex; gap: 12px; padding: 6px 0; border-top: 1px solid var(--line); }
+  .ev:first-child { border-top: 0; }
+  .ev .ts { color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
+  .k-success { color: var(--ok); } .k-alert, .k-error { color: var(--bad); }
+  .k-action { color: var(--purple); } .k-info { color: var(--muted); }
+  .ask { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+  .ask input { flex: 1; min-width: 220px; background: var(--panel2); border: 1px solid var(--line);
+    color: var(--ink); border-radius: 10px; padding: 10px 12px; font-size: 14px; }
+  .ask button { background: var(--accent); color: #fff; border: 0; border-radius: 10px;
+    padding: 10px 18px; font-weight: 700; cursor: pointer; font-size: 14px; }
+  .ask button:disabled { opacity: .5; cursor: default; }
+  .answer { white-space: pre-wrap; font-size: 14px; line-height: 1.5; }
+  .sources { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chips button { background: var(--panel2); border: 1px solid var(--line); color: var(--muted);
+    border-radius: 999px; padding: 6px 12px; font-size: 12px; cursor: pointer; }
+  a { color: var(--purple); }
+  .foot { margin-top: 20px; font-size: 12px; color: var(--muted); }
+  @media (max-width: 860px) { .g4 { grid-template-columns: repeat(2, 1fr); } .g3, .g2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="shield">&#128737;&#65039;</span>
+    <h1>Resilience Guard — Cockpit</h1>
+    <span class="live"><span class="dot"></span> Supervision active</span>
+  </header>
+
+  <h2>État des services</h2>
+  <div id="services" class="grid g4"></div>
+
+  <h2>Indicateurs live (passerelle)</h2>
+  <div class="grid g4">
+    <div class="card"><div class="label">Débit</div><div class="value" id="kpi-req">—<span class="unit">req/s</span></div></div>
+    <div class="card"><div class="label">Latence p95</div><div class="value" id="kpi-p95">—<span class="unit">ms</span></div></div>
+    <div class="card"><div class="label">Erreurs 4xx</div><div class="value" id="kpi-4xx">—<span class="unit">/s</span></div></div>
+    <div class="card"><div class="label">Erreurs 5xx</div><div class="value" id="kpi-5xx">—<span class="unit">/s</span></div></div>
+  </div>
+  <div class="grid g4" style="margin-top:12px">
+    <div class="card"><div class="label">CPU conteneurs</div><div class="value" id="kpi-cpu">—<span class="unit">%</span></div></div>
+    <div class="card"><div class="label">Mémoire conteneurs</div><div class="value" id="kpi-mem">—<span class="unit">Mo</span></div></div>
+    <div class="card"><div class="label">Requêtes bloquées (WAF)</div><div class="value" id="kpi-waf">—</div></div>
+    <div class="card"><div class="label">Bouclier anti-DoS</div><div class="value" id="kpi-shield" style="font-size:20px;margin-top:10px">—</div></div>
+  </div>
+
+  <h2>Trafic & sécurité</h2>
+  <div class="grid g2">
+    <div class="card"><div class="chart-title">Débit (req/s)</div><div id="c-req"></div></div>
+    <div class="card"><div class="chart-title">Latence p95 (ms)</div><div id="c-lat"></div></div>
+    <div class="card"><div class="chart-title">Erreurs 4xx + 5xx (/s)</div><div id="c-err"></div></div>
+    <div class="card"><div class="chart-title">Requêtes bloquées WAF (/s)</div><div id="c-waf"></div></div>
+  </div>
+
+  <h2>Détection par intelligence artificielle</h2>
+  <div class="grid g3">
+    <div class="card anom" id="anom-card">
+      <div class="label">Score d'anomalie (Isolation Forest)</div>
+      <div class="big" id="anom-score">—</div>
+      <div id="anom-badge"></div>
+    </div>
+    <div class="card" style="grid-column: span 2"><div class="chart-title">Score d'anomalie (0–100)</div><div id="c-anom"></div></div>
+  </div>
+
+  <h2>Remédiation autonome</h2>
+  <div class="card">
+    <div id="rem-badges" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px"></div>
+    <div class="stepper" id="rem-stepper"></div>
+    <div class="timeline" id="rem-timeline"></div>
+  </div>
+
+  <h2>Assistant IA (RAG, local)</h2>
+  <div class="card">
+    <div class="ask">
+      <input id="ask-input" placeholder="Ex. : Que fait le module quand le WAF bloque une requête ?" />
+      <button id="ask-btn">Demander</button>
+    </div>
+    <div class="chips" id="ask-chips"></div>
+    <div class="answer" id="ask-answer" style="margin-top:12px;color:var(--muted)">Pose une question sur le module, les procédures ou un incident.</div>
+    <div class="sources" id="ask-sources"></div>
+  </div>
+
+  <div class="foot">
+    Outils : <a href="/prom/" target="_blank" rel="noreferrer">Prometheus</a> ·
+    Grafana sur le port 3000 · métriques de la passerelle sur <code>:8080/metrics</code>.
+    Données et attaques fictives — usage pédagogique / labo.
+  </div>
+</div>
+
+<script>
+const SERVICES = [
+  { job: "gateway", label: "Passerelle (WAF + proxy)" },
+  { job: "detector", label: "Détecteur ML" },
+  { job: "orchestrator", label: "Orchestrateur" },
+  { job: "prometheus", label: "Supervision" },
+  { job: "cadvisor", label: "Métriques conteneurs" },
+];
+const SUGGESTED = [
+  "Que fait le module quand le WAF bloque une requête ?",
+  "Comment fonctionne la remédiation anti-DoS ?",
+  "Comment installer le module devant mon application ?",
+  "Comment activer le bouclier manuellement ?",
+];
+
+async function promInstant(q) {
+  try {
+    const r = await fetch(`/prom/api/v1/query?query=${encodeURIComponent(q)}`);
+    const j = await r.json();
+    return j?.data?.result ?? [];
+  } catch { return []; }
+}
+async function promRange(q, minutes = 15, step = 15) {
+  try {
+    const end = Math.floor(Date.now() / 1000), start = end - minutes * 60;
+    const r = await fetch(`/prom/api/v1/query_range?query=${encodeURIComponent(q)}&start=${start}&end=${end}&step=${step}`);
+    const j = await r.json();
+    return j?.data?.result ?? [];
+  } catch { return []; }
+}
+function scalar(res) {
+  if (!res || !res.length) return 0;
+  const v = parseFloat(res[0].value?.[1]);
+  return Number.isFinite(v) ? v : 0;
+}
+function seriesValues(res, mul = 1) {
+  if (!res || !res.length) return [];
+  return res[0].values.map(([, v]) => parseFloat(v) * mul).map(v => Number.isFinite(v) ? v : 0);
+}
+function sparkline(values, color) {
+  const w = 300, h = 90, pad = 6;
+  if (!values.length) return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"></svg>`;
+  const max = Math.max(...values, 0.0001), min = Math.min(...values, 0);
+  const span = (max - min) || 1;
+  const n = values.length;
+  const pts = values.map((v, i) => {
+    const x = pad + (i / Math.max(1, n - 1)) * (w - 2 * pad);
+    const y = h - pad - ((v - min) / span) * (h - 2 * pad);
+    return [x, y];
+  });
+  const line = pts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
+  const area = line + ` L ${pts[n-1][0].toFixed(1)} ${h-pad} L ${pts[0][0].toFixed(1)} ${h-pad} Z`;
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+    <path d="${area}" fill="${color}" opacity="0.14" />
+    <path d="${line}" fill="none" stroke="${color}" stroke-width="2" vector-effect="non-scaling-stroke" />
+  </svg>`;
+}
+const round = (v, d = 1) => Math.round(v * 10 ** d) / 10 ** d;
+function setTile(id, val, unitHtml) {
+  document.getElementById(id).innerHTML = val + (unitHtml || "");
+}
+
+async function refresh() {
+  // KPI instantanés + santé
+  const [up, req, p95, e4, e5, cpu, mem, wafTot, aScore, aFlag, aTrained] = await Promise.all([
+    promInstant("up"),
+    promInstant('sum(rate(http_requests_total{job="gateway"}[1m]))'),
+    promInstant('histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job="gateway"}[1m])) by (le))'),
+    promInstant('sum(rate(http_requests_total{job="gateway",status="4xx"}[1m]))'),
+    promInstant('sum(rate(http_requests_total{job="gateway",status="5xx"}[1m]))'),
+    promInstant('sum(rate(container_cpu_usage_seconds_total{name=~"rg-.*"}[1m]))*100 or sum(rate(container_cpu_usage_seconds_total{id=~"/docker/[a-f0-9]+"}[1m]))*100'),
+    promInstant('sum(container_memory_usage_bytes{name=~"rg-.*"})/1024/1024 or sum(container_memory_usage_bytes{id=~"/docker/[a-f0-9]+"})/1024/1024'),
+    promInstant('sum(waf_blocked_total)'),
+    promInstant("anomaly_score"),
+    promInstant("anomaly_flag"),
+    promInstant("detector_trained"),
+  ]);
+
+  const health = {};
+  up.forEach(s => { health[s.metric.job] = s.value[1] === "1"; });
+  document.getElementById("services").innerHTML = SERVICES.map(s => {
+    const ok = health[s.job];
+    return `<div class="card svc"><span class="s ${ok ? "on" : "off"}"></span>
+      <div><div class="n">${s.label}</div><div class="st">${ok ? "en ligne" : "hors ligne"}</div></div></div>`;
+  }).join("");
+
+  setTile("kpi-req", round(scalar(req)), '<span class="unit">req/s</span>');
+  setTile("kpi-p95", Math.round(scalar(p95) * 1000), '<span class="unit">ms</span>');
+  setTile("kpi-4xx", round(scalar(e4)), '<span class="unit">/s</span>');
+  setTile("kpi-5xx", round(scalar(e5)), '<span class="unit">/s</span>');
+  setTile("kpi-cpu", Math.round(scalar(cpu)), '<span class="unit">%</span>');
+  setTile("kpi-mem", Math.round(scalar(mem)), '<span class="unit">Mo</span>');
+  setTile("kpi-waf", Math.round(scalar(wafTot)), "");
+
+  // Détection IA
+  const trained = scalar(aTrained) === 1, flag = scalar(aFlag) === 1, score = round(scalar(aScore));
+  document.getElementById("anom-score").textContent = trained ? score : "—";
+  document.getElementById("anom-score").style.color = flag ? "var(--bad)" : "var(--ok)";
+  document.getElementById("anom-badge").innerHTML = !trained
+    ? '<span class="badge b-acc">&#129504; apprentissage de la normale…</span>'
+    : flag ? '<span class="badge b-bad">&#9888; ANOMALIE DÉTECTÉE</span>'
+           : '<span class="badge b-ok">&#10003; Comportement normal</span>';
+
+  // Graphes (range)
+  const [rReq, rLat, rErr, rWaf, rAnom] = await Promise.all([
+    promRange('sum(rate(http_requests_total{job="gateway"}[1m]))'),
+    promRange('histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job="gateway"}[1m])) by (le))'),
+    promRange('sum(rate(http_requests_total{job="gateway",status=~"4xx|5xx"}[1m]))'),
+    promRange('sum(rate(waf_blocked_total[1m]))'),
+    promRange("anomaly_score"),
+  ]);
+  document.getElementById("c-req").innerHTML = sparkline(seriesValues(rReq), "#7c6cff");
+  document.getElementById("c-lat").innerHTML = sparkline(seriesValues(rLat, 1000), "#e0a83d");
+  document.getElementById("c-err").innerHTML = sparkline(seriesValues(rErr), "#e5604d");
+  document.getElementById("c-waf").innerHTML = sparkline(seriesValues(rWaf), "#b388ff");
+  document.getElementById("c-anom").innerHTML = sparkline(seriesValues(rAnom), flag ? "#e5604d" : "#35c28a");
+
+  // Orchestrateur (état + timeline)
+  let rem = null;
+  try { rem = await (await fetch("/orch/status", { cache: "no-store" })).json(); } catch {}
+  renderRemediation(rem);
+
+  // Bouclier (depuis l'orchestrateur, ou la remédiation active)
+  const shieldOn = rem?.protection;
+  document.getElementById("kpi-shield").innerHTML = shieldOn
+    ? '<span class="badge b-warn">&#128737;&#65039; actif</span>'
+    : '<span class="badge b-ok">inactif</span>';
+}
+
+function renderRemediation(rem) {
+  const st = rem?.state || "NORMAL";
+  const steps = ["NORMAL", "REMEDIATING", "VERIFYING", "RECOVERED"];
+  const labels = { NORMAL: "Surveillance", REMEDIATING: "Action", VERIFYING: "Vérification", RECOVERED: "Rétabli" };
+  const idx = Math.max(0, steps.indexOf(st));
+
+  const badges = [];
+  if (st === "NORMAL") badges.push('<span class="badge b-ok">&#9679; Surveillance — normal</span>');
+  else if (st === "RECOVERED") badges.push('<span class="badge b-ok">&#10003; Service rétabli (sous protection)</span>');
+  else badges.push('<span class="badge b-warn">&#8635; Remédiation en cours…</span>');
+  if (rem?.protection) badges.push('<span class="badge b-acc">&#128737;&#65039; Bouclier actif</span>');
+  if (rem?.security_state === "CONTAINED") badges.push('<span class="badge b-warn">&#9888; Injection contenue</span>');
+  if (rem?.last_canary) {
+    const c = rem.last_canary;
+    badges.push(`<span class="badge ${c.ok ? "b-ok" : "b-bad"}">Canari : ${c.ok ? "&#10003; OK (" + c.latency_ms + " ms)" : "&#10007; " + (c.detail || "")}</span>`);
+  }
+  if (typeof rem?.waf_blocks === "number") badges.push(`<span class="badge b-acc">WAF bloqués : ${rem.waf_blocks}</span>`);
+  document.getElementById("rem-badges").innerHTML = badges.join("");
+
+  document.getElementById("rem-stepper").innerHTML = steps.map((s, i) =>
+    `<div class="step"><div class="bar ${i <= idx ? "on" : ""}"></div><div class="t ${i <= idx ? "on" : ""}">${labels[s]}</div></div>`
+  ).join("");
+
+  const tl = (rem?.timeline || []).slice().reverse();
+  document.getElementById("rem-timeline").innerHTML = tl.length
+    ? tl.map(e => `<div class="ev"><span class="ts">${e.t}</span><span class="k-${e.kind || "info"}">${e.label}</span></div>`).join("")
+    : '<div class="ev"><span class="k-info">En attente de l\'orchestrateur…</span></div>';
+}
+
+// Assistant RAG
+async function ask(question) {
+  const ansEl = document.getElementById("ask-answer"), srcEl = document.getElementById("ask-sources");
+  const btn = document.getElementById("ask-btn");
+  btn.disabled = true; ansEl.style.color = "var(--muted)"; ansEl.textContent = "L'assistant réfléchit (modèle local)…"; srcEl.textContent = "";
+  try {
+    const r = await fetch("/assistant/ask", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question }),
+    });
+    const j = await r.json();
+    ansEl.style.color = "var(--ink)"; ansEl.textContent = j.answer || "(pas de réponse)";
+    srcEl.textContent = (j.sources && j.sources.length) ? "Sources : " + j.sources.join(", ") : "";
+  } catch (e) {
+    ansEl.style.color = "var(--bad)"; ansEl.textContent = "Assistant injoignable : " + e;
+  } finally { btn.disabled = false; }
+}
+document.getElementById("ask-btn").addEventListener("click", () => {
+  const q = document.getElementById("ask-input").value.trim(); if (q) ask(q);
+});
+document.getElementById("ask-input").addEventListener("keydown", e => {
+  if (e.key === "Enter") { const q = e.target.value.trim(); if (q) ask(q); }
+});
+document.getElementById("ask-chips").innerHTML = SUGGESTED.map(s => `<button>${s}</button>`).join("");
+document.querySelectorAll("#ask-chips button").forEach(b =>
+  b.addEventListener("click", () => { document.getElementById("ask-input").value = b.textContent; ask(b.textContent); }));
+
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

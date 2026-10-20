@@ -1,0 +1,82 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "schemaVersion": 39,
+  "tags": ["resilience-guard"],
+  "time": { "from": "now-15m", "to": "now" },
+  "timezone": "browser",
+  "title": "Resilience Guard — Vue d'ensemble",
+  "uid": "resilience-guard",
+  "version": 1,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Débit (req/s) par la passerelle",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(http_requests_total{job=\"gateway\"}[1m]))", "legendFormat": "total" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Latence p95 (s)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=\"gateway\"}[1m])) by (le))", "legendFormat": "p95" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Erreurs HTTP (req/s)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(http_requests_total{job=\"gateway\",status=\"4xx\"}[1m]))", "legendFormat": "4xx" },
+        { "refId": "B", "expr": "sum(rate(http_requests_total{job=\"gateway\",status=\"5xx\"}[1m]))", "legendFormat": "5xx" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Requêtes bloquées par le WAF (req/s)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(waf_blocked_total[1m])) by (rule)", "legendFormat": "{{rule}}" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Score d'anomalie (ML)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "none", "min": 0, "max": 100 }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "anomaly_score", "legendFormat": "score" }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "CPU conteneurs (%)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(container_cpu_usage_seconds_total{name=~\"rg-.*\"}[1m]))*100 or sum(rate(container_cpu_usage_seconds_total{id=~\"/docker/[a-f0-9]+\"}[1m]))*100", "legendFormat": "cpu" }
+      ]
+    }
+  ]
+}
