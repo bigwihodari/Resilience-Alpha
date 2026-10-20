@@ -71,7 +71,7 @@ export default function ChatWidget() {
             <span className="font-bold text-sm">💬 Chat</span>
             <select value={active?.id || ""} onChange={(e) => setActive(rooms.find((r) => String(r.id) === e.target.value))}
               className="ml-auto bg-white/15 text-white text-xs rounded px-2 py-1 max-w-[9rem]">
-              {rooms.map((r) => <option key={r.id} value={r.id} className="text-ink">{r.is_global ? "🌐 " : "🔒 "}{r.name}</option>)}
+              {rooms.map((r) => <option key={r.id} value={r.id} className="text-ink">{r.kind === "global" ? "🌐 " : "🔒 "}{r.name}</option>)}
             </select>
             <button onClick={() => setCreating((v) => !v)} title="Nouveau salon" className="text-white/80 hover:text-white text-sm">＋</button>
             <button onClick={() => setOpen(false)} className="text-white/80 hover:text-white text-lg leading-none">×</button>
@@ -84,17 +84,21 @@ export default function ChatWidget() {
             </div>
           )}
           <div className="flex-1 overflow-auto p-2 space-y-1.5">
-            {msgs.length === 0 && <div className="text-xs text-ink/40 text-center mt-4">Aucun message.</div>}
-            {msgs.map((m) => (
-              <div key={m.id} className={`flex ${m.sender === me ? "justify-end" : "justify-start"}`}>
-                <div className={`max-w-[80%] rounded-2xl px-2.5 py-1.5 text-sm ${m.sender === me ? "bg-accent text-white" : "bg-lavsoft text-ink"}`}>
-                  {m.sender !== me && <div className="text-[10px] font-bold opacity-70">{m.sender}</div>}{m.body}
+            {msgs.length === 0 && <div className="text-xs text-ink/40 text-center mt-4">Aucun message — lance la discussion !</div>}
+            {msgs.map((m) => {
+              const mine = m.author === me;
+              return (
+                <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+                  <div className={`max-w-[80%] rounded-2xl px-2.5 py-1.5 text-sm ${mine ? "bg-accent text-white rounded-br-sm" : "bg-lavsoft text-ink rounded-bl-sm"}`}>
+                    {!mine && <div className="text-[10px] font-bold text-accent/80">{m.author}</div>}
+                    <span className="break-words">{m.body}</span>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
             <div ref={endRef} />
           </div>
-          {active && !active.is_global && (
+          {active && active.kind !== "global" && (
             <div className="px-2 py-1 border-t border-lavsoft flex gap-1 items-center">
               <input id="cw-member" placeholder="ajouter un membre…" className="flex-1 border border-lav rounded px-2 py-1 text-xs" />
               <button onClick={async () => { const el = document.getElementById("cw-member"); if (el.value.trim()) { try { await addRoomMember(active.id, el.value.trim()); el.value = ""; } catch { /* */ } } }} className="text-xs bg-lavsoft text-accent px-2 py-1 rounded">+</button>

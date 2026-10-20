@@ -8,6 +8,7 @@ export default function DinoWidget({ onEarned }) {
   const [open, setOpen] = useState(false);
   const [phase, setPhase] = useState("idle"); // idle | run | over
   const [hud, setHud] = useState({ coins: 0, mult: 1, speed: 0 });
+  const [best, setBest] = useState(0);
   const [result, setResult] = useState(null);
   const canvasRef = useRef(null);
   const g = useRef(null);
@@ -38,6 +39,7 @@ export default function DinoWidget({ onEarned }) {
   async function over() {
     const s = g.current; if (!s) return;
     s.alive = false; setPhase("over");
+    setBest((b) => Math.max(b, s.coins_));
     try { const r = await dinoClaim(s.coins_, s.mult); setResult(r); if (onEarned) onEarned(); }
     catch (e) { setResult({ error: e.message }); }
   }
@@ -145,7 +147,8 @@ export default function DinoWidget({ onEarned }) {
             <div className="flex items-center gap-4 text-sm mb-2">
               <span>Pièces <b className="text-amber-600">{hud.coins}</b></span>
               <span>Multi <b className="text-red-600">x{hud.mult}</b></span>
-              <span className="text-ink/50">Vitesse {hud.speed}</span>
+              {best > 0 && <span className="text-ink/50">Record <b className="text-ink">{best}</b></span>}
+              <span className="text-ink/40">Vitesse {hud.speed}</span>
               <span className="ml-auto text-xs text-ink/50">Espace / clic = sauter</span>
             </div>
             <canvas ref={canvasRef} width={W} height={H} onClick={() => (phase === "run" ? jump() : startGame())}
