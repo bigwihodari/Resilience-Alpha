@@ -114,6 +114,7 @@ game_state = {
     "heist_max": GAME_HEIST_MAX,
     "loot_cap": GAME_LOOT_CAP,
     "recon_needed": GAME_RECON_FOR_HEIST,
+    "insider_count": 0,       # nb d'intel « insider » achetés au banquier (traçable IA)
 }
 game_lock = threading.Lock()
 degraded = {"on": False}  # bascule : endpoints métier en 503 (gated par GAME_DEGRADE)
@@ -123,6 +124,8 @@ GAME_HEIST = Counter("game_heist_total", "Tentatives de retrait réussies (jeu)"
 GAME_HEIST_AMT = Counter("game_heist_amount_total", "Montant exfiltré cumulé (jeu)")
 GAME_LOOT = Gauge("game_loot_current", "Butin courant détenu par l'attaquant (jeu)")
 GAME_BLOCKED = Gauge("game_blocked", "1 si l'attaquant est bloqué par l'IA (jeu)")
+GAME_INSIDER = Counter("game_insider_total", "Intel « insider » vendu par le banquier (jeu)")
+GAME_DINO_HIJACK = Counter("game_dino_hijack_total", "Tentatives de détournement de gain Dino (jeu)", ["result"])
 
 
 def ha_event(label, kind="info"):
@@ -306,6 +309,20 @@ class ChatMessage(Base):
         DateTime(timezone=True), server_default=func.now())
 
 
+class IntelOffer(Base):
+    """P2.6 — offre d'intel « insider » : le banquier vend des infos sur un client
+    à un attaquant (payé avec le butin). L'achat débloque la recon côté /game."""
+    __tablename__ = "intel_offers"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    target: Mapped[str] = mapped_column(String(64))
+    price: Mapped[float] = mapped_column(Numeric(14, 2))
+    created_by: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(12), default="open")  # open|sold
+    buyer: Mapped[str] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now())
+
+
 _engine = None
 
 
@@ -463,6 +480,11 @@ def startup():
                        "id SERIAL PRIMARY KEY, room_id INTEGER NOT NULL REFERENCES chat_rooms(id) ON DELETE CASCADE, "
                        "author VARCHAR(64) NOT NULL, body VARCHAR(1000) NOT NULL, "
                        "created_at TIMESTAMPTZ NOT NULL DEFAULT now())"))
+        # P2.6 — offres d'intel « insider » (banquier -> attaquant)
+        c.execute(text("CREATE TABLE IF NOT EXISTS intel_offers ("
+                       "id SERIAL PRIMARY KEY, target VARCHAR(64) NOT NULL, price NUMERIC(14,2) NOT NULL, "
+                       "created_by VARCHAR(64) NOT NULL, status VARCHAR(12) NOT NULL DEFAULT 'open', "
+                       "buyer VARCHAR(64), created_at TIMESTAMPTZ NOT NULL DEFAULT now())"))
     # Compte BANQUE : le bot de trafic (trafficbot) est le coffre de la banque, pas un
     # joueur. On lui met le rôle 'bank' -> exclu du leaderboard/victoire/annuaire, mais
     # il reste une cible de hack très lucrative et très sécurisée (P3.5).
@@ -1484,6 +1506,95 @@ def chat_post(room_id: int, body: MsgIn, ident: tuple = Depends(chat_identity)):
     return {"ok": True, "id": mid, "room_id": room_id, "author": me, "body": txt}
 
 
+# ---------------- P2.6 : banquier insider (vente d'intel) ----------------
+class IntelOfferIn(BaseModel):
+    target: str
+    price: float
+
+
+@app.post("/bank/intel/offer")
+def bank_intel_offer(body: IntelOfferIn, banker: str = Depends(require_banker)):
+    """Le banquier met en vente de l'intel sur un client (insider, payé au butin)."""
+    target = (body.target or "").strip()
+    if body.price < 0:
+        raise HTTPException(400, "prix invalide")
+    with Session(engine()) as s:
+        u = s.scalar(select(User).where(User.username == target))
+        if u is None or (u.role or "client") != "client":
+            raise HTTPException(400, "cible invalide — un client existant est requis")
+        o = IntelOffer(target=target, price=round(float(body.price), 2),
+                       created_by=banker, status="open")
+        s.add(o)
+        s.flush()
+        oid = o.id
+        s.commit()
+    print(f"[GAME] INSIDER offer banker={banker} target={target} price={body.price}", flush=True)
+    return {"id": oid, "target": target, "price": round(float(body.price), 2), "status": "open"}
+
+
+@app.get("/bank/intel/offers")
+def bank_intel_offers(banker: str = Depends(require_banker)):
+    with Session(engine()) as s:
+        rows = s.scalars(select(IntelOffer).order_by(IntelOffer.id.desc()).limit(30)).all()
+    return {"offers": [{"id": o.id, "target": o.target, "price": float(o.price),
+                        "status": o.status, "buyer": o.buyer} for o in rows]}
+
+
+@app.get("/intel/offers")
+def intel_offers():
+    """Offres d'intel disponibles (vue attaquant, non authentifié = console attaquant)."""
+    with Session(engine()) as s:
+        rows = s.scalars(select(IntelOffer).where(IntelOffer.status == "open")
+                         .order_by(IntelOffer.id.desc()).limit(30)).all()
+    return {"offers": [{"id": o.id, "target": o.target, "price": float(o.price)} for o in rows]}
+
+
+@app.post("/intel/offers/{offer_id}/buy")
+def intel_buy(offer_id: int, x_player: str = Header(default=None)):
+    """L'attaquant achète l'intel (payé avec le butin). Débloque la recon sur la
+    cible côté /game (solde approx + présence de livret). Tracé (métrique IA)."""
+    if _cooldown_remaining() > 0:
+        raise HTTPException(403, f"attaquant bloqué — cooldown {_cooldown_remaining()}s")
+    buyer = ((x_player or "").strip()[:32]) or "attaquant"
+    with Session(engine()) as s:
+        o = s.scalar(select(IntelOffer).where(IntelOffer.id == offer_id).with_for_update())
+        if o is None or o.status != "open":
+            raise HTTPException(404, "offre indisponible")
+        price = float(o.price)
+        with game_lock:
+            loot = game_state["loot"]
+        if loot < price:
+            raise HTTPException(402, f"butin insuffisant (prix {price:.0f} €, butin {loot:.0f} €)")
+        tu = s.scalar(select(User).where(User.username == o.target))
+        tacc = s.scalar(select(Account).where(Account.user_id == tu.id)) if tu else None
+        if tacc is None:
+            raise HTTPException(404, "cible de l'offre introuvable")
+        bal = float(tacc.balance)
+        sav = float(tacc.savings)
+        o.status = "sold"
+        o.buyer = buyer
+        s.commit()
+        target = o.target
+    intel_line = (f"[INSIDER] {target} : solde {_bucket(bal)}, "
+                  f"livret {'OUI ' + _bucket(sav) if sav > 0 else 'non'}.")
+    with game_lock:
+        game_state["loot"] = round(game_state["loot"] - price, 2)
+        game_state["victim"] = target
+        game_state["recon_count"] = max(game_state["recon_count"], GAME_RECON_FOR_HEIST)
+        if target not in game_state["discovered"]:
+            game_state["discovered"].append(target)
+        if intel_line not in game_state["intel"]:
+            game_state["intel"].append(intel_line)
+        game_state["intel"] = game_state["intel"][-8:]
+        game_state["insider_count"] = game_state.get("insider_count", 0) + 1
+        loot_now = game_state["loot"]
+    GAME_INSIDER.inc()
+    GAME_LOOT.set(loot_now)
+    print(f"[GAME] INSIDER buy offer={offer_id} buyer={buyer} target={target} price={price}", flush=True)
+    return {"ok": True, "target": target, "price": price, "intel": intel_line,
+            "ready_to_heist": True, **_game_public()}
+
+
 @app.get("/admin/integrity")
 def integrity(x_admin_token: str = Header(default=None)):
     """Contrôle d'intégrité des données (réponse à une compromission).
@@ -1709,7 +1820,8 @@ def game_reset(x_admin_token: str = Header(default=None)):
     with game_lock:
         game_state.update({"victim": GAME_VICTIM, "loot": 0.0, "loot_neutralized": 0.0,
                            "exfiltrated_total": 0.0, "recon_count": 0, "heist_count": 0,
-                           "intel": [], "discovered": [], "blocked_until": 0.0, "block_reason": ""})
+                           "intel": [], "discovered": [], "blocked_until": 0.0, "block_reason": "",
+                           "insider_count": 0})
     GAME_LOOT.set(0)
     GAME_BLOCKED.set(0)
     return _game_public()

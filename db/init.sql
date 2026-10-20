@@ -115,6 +115,17 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- P2.6 — offres d'intel insider (banquier vend des infos a un attaquant).
+CREATE TABLE IF NOT EXISTS intel_offers (
+    id         SERIAL PRIMARY KEY,
+    target     VARCHAR(64) NOT NULL,
+    price      NUMERIC(14,2) NOT NULL,
+    created_by VARCHAR(64) NOT NULL,
+    status     VARCHAR(12) NOT NULL DEFAULT 'open',   -- open|sold
+    buyer      VARCHAR(64),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS transactions (
     id         SERIAL PRIMARY KEY,
     account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
