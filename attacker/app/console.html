@@ -429,10 +429,12 @@ $("btn-recon").onclick = async () => {
 };
 $("btn-heist").onclick = async () => {
   const amt = parseFloat($("heist-amt").value) || null;
-  const src = $("heist-src").value;
+  const raw = $("heist-src").value;
+  let source = raw, livret_id = null;
+  if (raw.indexOf("livret:") === 0) { source = "livret"; livret_id = parseInt(raw.slice(7), 10); }
   $("btn-heist").disabled = true;
   try { await fetch("/api/game/heist",{method:"POST",headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({amount:amt, source:src})}); } catch(e){}
+    body: JSON.stringify({amount:amt, source:source, livret_id:livret_id})}); } catch(e){}
   pollGame();
 };
 $("tg-set").onclick = async () => {
@@ -449,6 +451,7 @@ $("tg-set").onclick = async () => {
 const kindClass = { success:"success", error:"error", alert:"error", action:"info", info:"info" };
 
 let tgDiscovered = "";   // signature de la liste découverte (rebuild dropdown si change)
+let srcSig = "";         // signature des livrets de la cible (rebuild du sélecteur de source)
 function renderGame(s){
   const t = s.target || {};
   // Scoreboard butin
@@ -471,6 +474,18 @@ function renderGame(s){
     const sel = $("tg-sel");
     sel.innerHTML = '<option value="">— cibles découvertes —</option>'
       + disc.map(n=>'<option value="'+n+'">'+n+'</option>').join("");
+  }
+
+  // Sélecteur de SOURCE du vol : courant / épargne + livrets découverts de la cible
+  const livs = t.victim_livrets || [];
+  const lsig = livs.map(l=>l.id+":"+l.name).join(",");
+  if (lsig !== srcSig){
+    srcSig = lsig;
+    const hs = $("heist-src"); const cur = hs.value;
+    hs.innerHTML = '<option value="courant">compte courant</option>'
+      + '<option value="epargne">livret d\'épargne (principal)</option>'
+      + livs.map(l=>'<option value="livret:'+l.id+'">'+l.name+' ('+l.bucket+')</option>').join("");
+    if ([...hs.options].some(o=>o.value===cur)) hs.value = cur;
   }
 
   $("g-caps").innerHTML =

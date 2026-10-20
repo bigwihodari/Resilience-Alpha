@@ -516,13 +516,14 @@ class GameController:
         self._event(f"Cible refusée : {self._detail(r)}", "error")
         return {"refused": True, "detail": self._detail(r), **self.state()}
 
-    def heist(self, amount=None, source="courant"):
+    def heist(self, amount=None, source="courant", livret_id=None):
         if self.is_blocked():
             self._event("Retrait refusé — attaquant bloqué (cooldown en cours).", "error")
             return {"blocked": True, **self.state()}
         try:
             r = requests.post(f"{self.target}/api/game/heist",
-                              json={"amount": amount, "source": source}, headers=self._h(), timeout=6)
+                              json={"amount": amount, "source": source, "livret_id": livret_id},
+                              headers=self._h(), timeout=6)
         except Exception as e:  # noqa: BLE001
             self._event(f"Retrait échoué : {e}", "error")
             return {"error": str(e), **self.state()}
@@ -632,6 +633,7 @@ class GameController:
             "target": {
                 "victim": st.get("victim", ""),
                 "discovered": st.get("discovered", []),
+                "victim_livrets": st.get("victim_livrets", []),
                 "loot": st.get("loot", 0), "loot_neutralized": st.get("loot_neutralized", 0),
                 "exfiltrated_total": st.get("exfiltrated_total", 0),
                 "recon_count": recon_count, "heist_count": st.get("heist_count", 0),

@@ -2107,6 +2107,14 @@ def game_recon(request: Request, x_player: str = Header(default=None)):
         ).all()
     victim = game_state["victim"]
     vrow = next((r for r in clients if r.username == victim), (clients[0] if clients else None))
+    # Livrets supplémentaires de la cible (révélés à partir de l'étape 3 ; ciblables au vol).
+    vlivrets = []
+    if vrow is not None:
+        with Session(engine()) as s:
+            vu = s.scalar(select(User).where(User.username == vrow.username))
+            if vu is not None:
+                vlivrets = [{"id": lv.id, "name": lv.name, "bucket": _bucket(float(lv.balance))}
+                            for lv in s.scalars(select(Livret).where(Livret.user_id == vu.id)).all()]
     with game_lock:
         game_state["recon_count"] += 1
         step = game_state["recon_count"]
@@ -2117,10 +2125,15 @@ def game_recon(request: Request, x_player: str = Header(default=None)):
         elif step == 2 and vrow is not None:
             item = f"Cible « {vrow.username} » : solde courant {_bucket(float(vrow.balance))} (approx.)."
         elif step == 3 and vrow is not None:
+            game_state["victim_livrets"] = vlivrets
             has = float(vrow.savings) > 0
-            item = (f"Cible « {vrow.username} » possède un LIVRET d'épargne ({_bucket(float(vrow.savings))})."
-                    if has else f"Cible « {vrow.username} » : pas de livret d'épargne détecté.")
+            base = (f"Cible « {vrow.username} » : LIVRET d'épargne ({_bucket(float(vrow.savings))})."
+                    if has else f"Cible « {vrow.username} » : pas de livret d'épargne principal.")
+            if vlivrets:
+                base += " Livrets supplémentaires : " + ", ".join(f"{lv['name']} ({lv['bucket']})" for lv in vlivrets) + "."
+            item = base
         else:
+            game_state["victim_livrets"] = vlivrets
             item = "Infos suffisantes — un retrait ciblé et PLAFONNÉ est possible."
         if item not in game_state["intel"]:
             game_state["intel"].append(item)
@@ -2160,7 +2173,8 @@ def _catch_bank(amount: float) -> float:
 
 class HeistIn(BaseModel):
     amount: float | None = None
-    source: str | None = "courant"   # courant | epargne (cibles clients)
+    source: str | None = "courant"   # courant | epargne | livret (cibles clients)
+    livret_id: int | None = None     # si source=livret : quel livret précis voler
     target: str | None = None        # cible explicite (sinon la cible courante)
     target_type: str | None = None   # auto-détecté : client | bank | attacker
 
@@ -2186,23 +2200,39 @@ def _heist_client(target: str, body: HeistIn):
     want = min(want, cap)
     with Session(engine()) as s:
         u = s.scalar(select(User).where(User.username == target))
-        acc = s.scalar(select(Account).where(Account.user_id == u.id).with_for_update()) if u else None
-        if acc is None:
+        if u is None:
             raise HTTPException(404, "cible introuvable")
-        avail = float(acc.savings if src == "epargne" else acc.balance)
+        lv = None
+        if src == "livret" and body.livret_id:
+            lv = s.scalar(select(Livret).where(Livret.id == body.livret_id,
+                                               Livret.user_id == u.id).with_for_update())
+            if lv is None:
+                raise HTTPException(404, "livret ciblé introuvable")
+            acc = s.scalar(select(Account).where(Account.user_id == u.id))  # pour l'id (transactions)
+            avail = float(lv.balance)
+            label = f" {lv.name}"
+        else:
+            acc = s.scalar(select(Account).where(Account.user_id == u.id).with_for_update())
+            if acc is None:
+                raise HTTPException(404, "cible introuvable")
+            avail = float(acc.savings if src == "epargne" else acc.balance)
+            label = " LIVRET" if src == "epargne" else ""
         stolen = round(min(want, avail), 2)
         if stolen <= 0:
             raise HTTPException(402, "compte/livret vide — rien à exfiltrer")
-        if src == "epargne":
+        if lv is not None:
+            lv.balance = float(lv.balance) - stolen
+        elif src == "epargne":
             acc.savings = float(acc.savings) - stolen
         else:
             acc.balance = float(acc.balance) - stolen
         s.add(Transaction(account_id=acc.id, amount=stolen, type="debit",
-                          recipient="⚠ EXFILTRATION" + (" LIVRET" if src == "epargne" else "") + " (jeu)",
-                          status="completed"))
+                          recipient="⚠ EXFILTRATION" + label + " (jeu)", status="completed"))
         caught = random.random() <= _catch_client(stolen)
         if caught:  # claw-back immédiat : la victime est remboursée
-            if src == "epargne":
+            if lv is not None:
+                lv.balance = float(lv.balance) + stolen
+            elif src == "epargne":
                 acc.savings = float(acc.savings) + stolen
             else:
                 acc.balance = float(acc.balance) + stolen

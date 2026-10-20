@@ -85,7 +85,7 @@ def game_recon():
 
 @app.post("/api/game/heist")
 def game_heist(body: dict = Body(default={})):
-    return game.heist(body.get("amount"), body.get("source", "courant"))
+    return game.heist(body.get("amount"), body.get("source", "courant"), body.get("livret_id"))
 
 
 @app.post("/api/game/target")
