@@ -132,7 +132,7 @@ export default function DinoWidget({ onEarned }) {
 
   return (
     <>
-      <button onClick={() => { setOpen(true); }} title="Mini-jeu Dino"
+      <button onClick={() => { setOpen(true); }} title="Mini-jeu Dino" aria-label="Ouvrir le mini-jeu Dino"
         className="fixed z-40 bottom-5 left-5 w-14 h-14 rounded-full bg-accent text-white text-2xl shadow-lg hover:bg-ink transition flex items-center justify-center">🦖</button>
 
       {open && (

@@ -60,7 +60,7 @@ export default function ChatWidget() {
   return (
     <>
       {!open && (
-        <button onClick={() => setOpen(true)} title="Chat"
+        <button onClick={() => setOpen(true)} title="Chat" aria-label="Ouvrir le chat"
           className="fixed z-40 bottom-5 right-5 w-14 h-14 rounded-full bg-ink text-white text-2xl shadow-lg hover:bg-accent transition flex items-center justify-center">
           💬{unseen > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center">{unseen}</span>}
         </button>

@@ -86,8 +86,8 @@ export default function Dashboard() {
   const isFav = recipient && favs.some((f) => f.username === recipient);
 
   const TabBtn = ({ id, label, badge }) => (
-    <button onClick={() => setTab(id)}
-      className={`px-4 py-2 rounded-xl text-sm font-bold whitespace-nowrap transition ${tab === id ? "bg-accent text-white shadow" : "bg-white text-ink/70 hover:bg-lavsoft"}`}>
+    <button onClick={() => setTab(id)} role="tab" aria-selected={tab === id}
+      className={`px-4 py-2 rounded-xl text-sm font-bold whitespace-nowrap transition focus-visible:outline-none ${tab === id ? "bg-accent text-white shadow-md scale-[1.03]" : "bg-white text-ink/70 hover:bg-lavsoft hover:text-ink"}`}>
       {label}{badge ? <span className="ml-1.5 bg-red-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">{badge}</span> : null}
     </button>
   );
@@ -125,8 +125,8 @@ export default function Dashboard() {
 
       {lb.winner && <div className="bg-amber-400 text-ink rounded-2xl p-4 mb-4 text-center font-extrabold shadow-lg animate-pulse">🏆 VICTOIRE — {lb.winner.name} ({lb.winner.camp}) a atteint le million !</div>}
 
-      {/* Menu (onglets) */}
-      <div className="flex gap-2 overflow-x-auto pb-2 mb-4">
+      {/* Menu (onglets) — collant en haut au défilement */}
+      <div role="tablist" aria-label="Navigation" className="sticky top-0 z-30 flex gap-2 overflow-x-auto py-2 mb-4 -mx-4 px-4 bg-[#E4E6F3]/85 backdrop-blur">
         <TabBtn id="livrets" label="💰 Livrets & Shop" />
         <TabBtn id="marche" label="📬 Marché" badge={unread || null} />
         <TabBtn id="payer" label="💸 Payer" />
