@@ -116,6 +116,41 @@ def _upg_level(s, user_id, ukey):
 
 def _global_mult(level):
     return 1.0 + 0.10 * int(level)
+
+
+# ---- UPGRADES SPÉCIALES : bonus permanents gagnables UNIQUEMENT aux enchères ----
+# (clé -> libellé / icône / description / pas d'effet par niveau). Appliquées dans
+# la boucle de production (sp_prod, sp_interest) et au calcul des coûts (sp_discount).
+SPECIAL_UPGRADES = {
+    "sp_prod":     {"label": "Turbo production", "icon": "⚡",
+                    "desc": "+8 % de production sur TOUS tes livrets, par niveau.", "step": 0.08},
+    "sp_interest": {"label": "Taux privilégié", "icon": "📈",
+                    "desc": "+0,3 % de taux sur chaque livret (principal inclus), par niveau.",
+                    "step": 0.003},
+    "sp_discount": {"label": "Remise VIP", "icon": "🏷️",
+                    "desc": "-6 % sur tous les coûts de la boutique, par niveau (plancher -60 %).",
+                    "step": 0.06},
+}
+
+
+def _shop_discount(s, user_id) -> float:
+    """Facteur multiplicatif appliqué aux coûts du shop (upgrade spéciale 'sp_discount')."""
+    lvl = _upg_level(s, user_id, "sp_discount")
+    return max(0.4, 1.0 - SPECIAL_UPGRADES["sp_discount"]["step"] * lvl)
+
+
+def _grant_special(s, user_id, ukey) -> int:
+    """Accorde (ou monte d'un niveau) une upgrade spéciale à un client. Renvoie le niveau."""
+    upg = s.scalar(select(Upgrade).where(Upgrade.user_id == user_id,
+                                         Upgrade.ukey == ukey).with_for_update())
+    if upg is None:
+        upg = Upgrade(user_id=user_id, ukey=ukey, level=1)
+        s.add(upg)
+        return 1
+    upg.level = int(upg.level) + 1
+    return int(upg.level)
+
+
 FAIL_PROMOTE = int(os.environ.get("FAIL_PROMOTE", "3"))       # échecs avant promotion du secours
 FAILBACK_CONFIRM = int(os.environ.get("FAILBACK_CONFIRM", "3"))  # cycles OK avant retour au principal
 repl_state = {"role": ROLE, "name": HA_NAME, "promoted": ROLE == "primary", "peer": PEER_API_URL,
@@ -452,6 +487,10 @@ class Auction(Base):
     winning_bid: Mapped[float] = mapped_column(Numeric(14, 2), nullable=True)
     phish: Mapped[int] = mapped_column(Integer, default=0)            # P5 : fausse enchère (phishing)
     beneficiary: Mapped[str] = mapped_column(String(64), nullable=True)  # attaquant qui empoche la mise
+    ends_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=True)  # deadline du timer
+    perk_kind: Mapped[str] = mapped_column(String(16), default="money")   # money | pct | upgrade
+    perk_value: Mapped[str] = mapped_column(String(64), default="")       # montant / pourcentage / clé d'upgrade
+    auto: Mapped[int] = mapped_column(Integer, default=0)                 # 1 = enchère générée automatiquement
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now())
 
@@ -462,6 +501,7 @@ class Bid(Base):
     auction_id: Mapped[int] = mapped_column(ForeignKey("auctions.id", ondelete="CASCADE"))
     username: Mapped[str] = mapped_column(String(64))
     amount: Mapped[float] = mapped_column(Numeric(14, 2))
+    bidder_kind: Mapped[str] = mapped_column(String(12), default="client")  # client | attacker
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now())
 
@@ -675,6 +715,12 @@ def startup():
         # P5 — phishing : fausses enchères (colonnes ajoutées à auctions)
         c.execute(text("ALTER TABLE auctions ADD COLUMN IF NOT EXISTS phish INTEGER NOT NULL DEFAULT 0"))
         c.execute(text("ALTER TABLE auctions ADD COLUMN IF NOT EXISTS beneficiary VARCHAR(64)"))
+        # P2.7 — enchères AUTOMATIQUES : timer + perks (money / pct / upgrade spécial) + PvP attaquants
+        c.execute(text("ALTER TABLE auctions ADD COLUMN IF NOT EXISTS ends_at TIMESTAMPTZ"))
+        c.execute(text("ALTER TABLE auctions ADD COLUMN IF NOT EXISTS perk_kind VARCHAR(16) NOT NULL DEFAULT 'money'"))
+        c.execute(text("ALTER TABLE auctions ADD COLUMN IF NOT EXISTS perk_value VARCHAR(64) NOT NULL DEFAULT ''"))
+        c.execute(text("ALTER TABLE auctions ADD COLUMN IF NOT EXISTS auto INTEGER NOT NULL DEFAULT 0"))
+        c.execute(text("ALTER TABLE bids ADD COLUMN IF NOT EXISTS bidder_kind VARCHAR(12) NOT NULL DEFAULT 'client'"))
         c.execute(text("CREATE TABLE IF NOT EXISTS quizzes ("
                        "id SERIAL PRIMARY KEY, question VARCHAR(500) NOT NULL, answer VARCHAR(140) NOT NULL, "
                        "prize NUMERIC(14,2) NOT NULL, status VARCHAR(12) NOT NULL DEFAULT 'open', "
@@ -730,6 +776,7 @@ def startup():
     if ROLE == "backup" and PEER_API_URL:
         threading.Thread(target=replicate_loop, daemon=True).start()
     threading.Thread(target=savings_interest_loop, daemon=True).start()
+    threading.Thread(target=auction_engine_loop, daemon=True).start()
 
 
 @app.get("/health")
@@ -1034,12 +1081,19 @@ def shop(user: str = Depends(current_user)):
     """Catalogue d'améliorations avec le niveau actuel et le PROCHAIN coût (par joueur)."""
     with Session(engine()) as s:
         u = _user_or_404(s, user)
+        disc = _shop_discount(s, u.id)
         items = []
         for ukey, cfg in SHOP.items():
             lvl = _upg_level(s, u.id, ukey)
             items.append({"ukey": ukey, "label": cfg["label"], "desc": cfg["desc"],
-                          "level": lvl, "next_cost": upg_cost(cfg["base"], cfg["growth"], lvl)})
-    return {"items": items}
+                          "level": lvl, "next_cost": round(upg_cost(cfg["base"], cfg["growth"], lvl) * disc, 2)})
+        # Upgrades spéciales détenues (gagnées aux enchères) — index affiché au joueur.
+        specials = []
+        for ukey, meta in SPECIAL_UPGRADES.items():
+            lvl = _upg_level(s, u.id, ukey)
+            specials.append({"ukey": ukey, "label": meta["label"], "icon": meta["icon"],
+                             "desc": meta["desc"], "level": lvl})
+    return {"items": items, "specials": specials, "discount": round((1 - disc) * 100)}
 
 
 @app.post("/shop/buy")
@@ -1054,7 +1108,8 @@ def shop_buy(body: BuyIn, user: str = Depends(current_user)):
         upg = s.scalar(select(Upgrade).where(Upgrade.user_id == u.id,
                                              Upgrade.ukey == body.ukey).with_for_update())
         level = int(upg.level) if upg else 0
-        cost = upg_cost(cfg["base"], cfg["growth"], level)
+        disc = _shop_discount(s, u.id)
+        cost = round(upg_cost(cfg["base"], cfg["growth"], level) * disc, 2)
         if float(acc.balance) < cost:
             raise HTTPException(402, f"solde insuffisant (coût {cost} €)")
         acc.balance = float(acc.balance) - cost
@@ -1066,7 +1121,8 @@ def shop_buy(body: BuyIn, user: str = Depends(current_user)):
         new_balance = float(acc.balance)
     ws_manager.publish({"type": "tx", "from": user, "to": "SHOP", "amount": cost, "op": "buy"})
     return {"status": "ok", "ukey": body.ukey, "level": level + 1, "paid": cost,
-            "next_cost": upg_cost(cfg["base"], cfg["growth"], level + 1), "balance": new_balance}
+            "next_cost": round(upg_cost(cfg["base"], cfg["growth"], level + 1) * disc, 2),
+            "balance": new_balance}
 
 
 @app.post("/livrets/{livret_id}/upgrade")
@@ -1185,16 +1241,28 @@ def savings_interest_loop():
                 # Boost du livret principal par utilisateur (upgrade 'principal_rate').
                 p_levels = {uid: lvl for uid, lvl in s.execute(
                     select(Upgrade.user_id, Upgrade.level).where(Upgrade.ukey == "principal_rate")).all()}
+                # Upgrades SPÉCIALES (gagnées aux enchères) : turbo production + taux privilégié.
+                sp_prod = {uid: lvl for uid, lvl in s.execute(
+                    select(Upgrade.user_id, Upgrade.level).where(Upgrade.ukey == "sp_prod")).all()}
+                sp_int = {uid: lvl for uid, lvl in s.execute(
+                    select(Upgrade.user_id, Upgrade.level).where(Upgrade.ukey == "sp_interest")).all()}
+
+                def _mult(uid):
+                    return mults.get(uid, 1.0) * (1.0 + SPECIAL_UPGRADES["sp_prod"]["step"] * int(sp_prod.get(uid, 0)))
+
+                def _rbonus(uid):
+                    return SPECIAL_UPGRADES["sp_interest"]["step"] * int(sp_int.get(uid, 0))
+
                 for a in s.scalars(select(Account).where(Account.savings > 0)).all():
-                    eff_rate = rate + LIVRET_RATE_STEP * int(p_levels.get(a.user_id, 0))
+                    eff_rate = rate + LIVRET_RATE_STEP * int(p_levels.get(a.user_id, 0)) + _rbonus(a.user_id)
                     if eff_rate <= 0:
                         continue
-                    interest = round(float(a.savings) * eff_rate * mults.get(a.user_id, 1.0), 2)
+                    interest = round(float(a.savings) * eff_rate * _mult(a.user_id), 2)
                     if interest > 0:
                         a.savings = float(a.savings) + interest
                         touched = True
                 for lv in s.scalars(select(Livret).where(Livret.balance > 0, Livret.rate > 0)).all():
-                    interest = round(float(lv.balance) * float(lv.rate) * mults.get(lv.user_id, 1.0), 2)
+                    interest = round(float(lv.balance) * (float(lv.rate) + _rbonus(lv.user_id)) * _mult(lv.user_id), 2)
                     if interest > 0:
                         lv.balance = float(lv.balance) + interest
                         touched = True
@@ -1584,27 +1652,212 @@ def read_mail(mail_id: int, user: str = Depends(current_user)):
 
 
 class AuctionIn(BaseModel):
-    title: str
-    item_value: float
+    title: str | None = None
+    item_value: float | None = None
     min_bid: float | None = 0
+    perk_kind: str | None = None       # money | pct | upgrade (sinon tiré au sort)
+    perk_value: str | None = None
+    duration: float | None = None      # s avant clôture auto
 
 
 class BidIn(BaseModel):
     amount: float
 
 
+# ------- Enchères AUTOMATIQUES : config / perks / butin attaquant / PvP -------
+AUCTION_POOL = int(os.environ.get("AUCTION_POOL", "3"))             # enchères ouvertes en continu
+AUCTION_DURATION = float(os.environ.get("AUCTION_DURATION", "90"))  # s avant clôture auto
+AUCTION_TICK = float(os.environ.get("AUCTION_TICK", "3"))           # s entre deux passages du moteur
+AUCTION_PCT_CAP = float(os.environ.get("AUCTION_PCT_CAP", "60000")) # plafond du perk « % de fortune »
+AUCTION_ITEMS = ["Montre en or", "Tableau de maître", "Lingot d'argent", "Voiture de collection",
+                 "Diamant brut", "Carte rarissime", "Villa bord de mer", "Set de montres suisses",
+                 "Coffre mystère", "Œuvre numérique", "Grand cru millésimé"]
+
+
+def _attacker_loot(handle: str) -> float:
+    h = (handle or "attaquant").strip() or "attaquant"
+    with game_lock:
+        return float(game_state.get("loot", 0.0)) if h == "attaquant" else float(rivals.get(h, 0.0))
+
+
+def _attacker_loot_delta(handle: str, delta: float) -> float:
+    h = (handle or "attaquant").strip() or "attaquant"
+    with game_lock:
+        if h == "attaquant":
+            game_state["loot"] = round(max(0.0, float(game_state.get("loot", 0.0)) + delta), 2)
+            return game_state["loot"]
+        rivals[h] = round(max(0.0, rivals.get(h, 0.0) + delta), 2)
+        return rivals[h]
+
+
+def _bidder_identity(authorization: str, x_player: str) -> tuple:
+    """Enchérisseur : JWT -> (username, 'client') ; sinon X-Player -> (handle, 'attacker')."""
+    if authorization and authorization.startswith("Bearer "):
+        try:
+            claims = jwt.decode(authorization.split(" ", 1)[1], JWT_SECRET, algorithms=[JWT_ALG])
+            uname = claims.get("sub")
+            if uname:
+                return uname, "client"
+        except Exception:  # noqa: BLE001
+            pass
+    h = (x_player or "").strip()[:32]
+    if h:
+        return h, "attacker"
+    raise HTTPException(401, "identité requise (connexion ou en-tête X-Player)")
+
+
+def _perk_label(kind: str, value: str) -> str:
+    if kind == "pct":
+        return f"+{value} % de ta fortune"
+    if kind == "upgrade":
+        meta = SPECIAL_UPGRADES.get(value, {})
+        return f"{meta.get('icon', '🎁')} Upgrade spéciale — {meta.get('label', value)}"
+    return f"+{float(value or 0):.0f} € cash"
+
+
+def _gen_auction_params() -> dict:
+    """Tire au sort un objet + un perk + une fourchette de mise/timer."""
+    roll = random.random()
+    if roll < 0.5:
+        val = float(round(random.uniform(2000, 12000), -2))
+        kind, pv, item_value = "money", f"{val:.0f}", val
+    elif roll < 0.8:
+        pct = random.choice([5, 8, 10, 12, 15, 20])
+        kind, pv, item_value = "pct", str(pct), float(pct * 700)
+    else:
+        key = random.choice(list(SPECIAL_UPGRADES.keys()))
+        val = float(round(random.uniform(4000, 9000), -2))  # équivalent cash pour un attaquant
+        kind, pv, item_value = "upgrade", key, val
+    min_bid = float(round(item_value * random.uniform(0.12, 0.3), -1))
+    return {"title": random.choice(AUCTION_ITEMS), "item_value": item_value,
+            "min_bid": max(10.0, min_bid), "perk_kind": kind, "perk_value": pv}
+
+
+def _create_auction(s, params: dict, created_by: str, auto: int, duration: float):
+    a = Auction(title=(params["title"] or "Objet").strip()[:140],
+                item_value=round(float(params["item_value"]), 2),
+                min_bid=round(max(0.0, float(params["min_bid"] or 0)), 2),
+                status="open", created_by=created_by, auto=auto,
+                perk_kind=params.get("perk_kind") or "money",
+                perk_value=str(params.get("perk_value") or ""),
+                ends_at=dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=duration))
+    s.add(a)
+    s.flush()
+    _mail_clients(s, f"Nouvelle enchère : {a.title}",
+                  f"« {a.title} » est aux enchères — récompense : {_perk_label(a.perk_kind, a.perk_value)}.\n"
+                  f"Mise minimale {float(a.min_bid):.0f} €. Timer {int(duration)} s. "
+                  f"Enchéris depuis l'onglet Marché !", "auction")
+    return a
+
+
+def _award_auction(s, a) -> str | None:
+    """Clôture une enchère : attribue au plus offrant SOLVABLE (client OU attaquant),
+    débite sa mise, applique le perk. Mail au gagnant client. Renvoie le nom du gagnant."""
+    bids = s.scalars(select(Bid).where(Bid.auction_id == a.id)
+                     .order_by(Bid.amount.desc(), Bid.id.asc())).all()
+    val = float(a.item_value)
+    winner = None
+    winning_bid = None
+    for b in bids:
+        bid_amt = float(b.amount)
+        if (b.bidder_kind or "client") == "attacker":
+            if _attacker_loot(b.username) < bid_amt:
+                continue
+            _attacker_loot_delta(b.username, -bid_amt)                    # paie la mise
+            gain = val                                                   # cash / upgrade -> équivalent cash
+            if a.perk_kind == "pct":
+                gain = min(AUCTION_PCT_CAP, round(_attacker_loot(b.username) * float(a.perk_value or 0) / 100, 2))
+            _attacker_loot_delta(b.username, gain)
+            winner, winning_bid = b.username, bid_amt
+            break
+        wu = s.scalar(select(User).where(User.username == b.username))
+        if wu is None or (wu.role or "client") != "client":
+            continue
+        wacc = s.scalar(select(Account).where(Account.user_id == wu.id).with_for_update())
+        if wacc is None or float(wacc.balance) < bid_amt:
+            continue  # insolvable -> offrant suivant
+        wacc.balance = float(wacc.balance) - bid_amt
+        s.add(Transaction(account_id=wacc.id, amount=bid_amt, type="debit",
+                          recipient=f"ENCHÈRE « {a.title} » (mise)", status="completed"))
+        if a.perk_kind == "upgrade":
+            lvl = _grant_special(s, wu.id, a.perk_value)
+            meta = SPECIAL_UPGRADES.get(a.perk_value, {})
+            gain_txt = f"{meta.get('icon','🎁')} {meta.get('label', a.perk_value)} niveau {lvl}"
+            s.add(Mail(user_id=wu.id, subject=f"Enchère remportée : {a.title}",
+                       body=f"Tu remportes « {a.title} » pour {bid_amt:.0f} € et débloques "
+                            f"l'upgrade spéciale {gain_txt} ! {meta.get('desc','')}", kind="prize"))
+        else:
+            if a.perk_kind == "pct":
+                wealth = float(wacc.balance) + float(wacc.savings) + float(
+                    s.scalar(select(func.coalesce(func.sum(Livret.balance), 0)).where(Livret.user_id == wu.id)) or 0)
+                gain = min(AUCTION_PCT_CAP, round(wealth * float(a.perk_value or 0) / 100, 2))
+            else:
+                gain = val
+            wacc.balance = float(wacc.balance) + gain
+            s.add(Transaction(account_id=wacc.id, amount=gain, type="credit",
+                              recipient=f"ENCHÈRE « {a.title} » (récompense)", status="completed"))
+            net = round(gain - bid_amt, 2)
+            s.add(Mail(user_id=wu.id, subject=f"Enchère remportée : {a.title}",
+                       body=f"Félicitations ! Tu remportes « {a.title} » pour une mise de {bid_amt:.0f} €. "
+                            f"Récompense {gain:.0f} € — gain net {net:+.0f} €.", kind="prize"))
+        winner, winning_bid = b.username, bid_amt
+        break
+    a.status = "closed"
+    a.winner = winner
+    a.winning_bid = winning_bid
+    return winner
+
+
+def auction_engine_loop():
+    """Moteur d'enchères AUTOMATIQUE (noeud autoritaire) : clôt les enchères dont le
+    timer est écoulé et maintient un pool d'enchères ouvertes. Pas besoin du banquier."""
+    while True:
+        time.sleep(AUCTION_TICK)
+        if not repl_state.get("promoted"):
+            continue
+        try:
+            now = dt.datetime.now(dt.timezone.utc)
+            closed, opened = [], []
+            with Session(engine()) as s:
+                due = s.scalars(select(Auction).where(Auction.status == "open", Auction.phish == 0,
+                                                      Auction.ends_at.is_not(None),
+                                                      Auction.ends_at <= now).with_for_update()).all()
+                for a in due:
+                    w = _award_auction(s, a)
+                    closed.append((a.id, w))
+                n_open = int(s.scalar(select(func.count()).select_from(Auction)
+                                      .where(Auction.status == "open", Auction.phish == 0, Auction.auto == 1)) or 0)
+                for _ in range(max(0, AUCTION_POOL - n_open)):
+                    a = _create_auction(s, _gen_auction_params(), "auto", 1, AUCTION_DURATION)
+                    opened.append(a.id)
+                s.commit()
+            for aid, w in closed:
+                ws_manager.publish({"type": "auction", "op": "close", "id": aid, "winner": w})
+            if opened:
+                ws_manager.publish({"type": "auction", "op": "open", "id": opened[-1]})
+            if closed or opened:
+                ws_manager.publish({"type": "mail"})
+            if closed:
+                _check_win()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 @app.post("/bank/auctions")
 def bank_create_auction(body: AuctionIn, banker: str = Depends(require_banker)):
-    if body.item_value <= 0:
-        raise HTTPException(400, "valeur de l'objet invalide")
+    """Le banquier peut lancer une enchère à la main (optionnel : le moteur auto suffit)."""
+    params = _gen_auction_params()
+    if body.title:
+        params["title"] = body.title.strip()[:140]
+    if body.item_value and body.item_value > 0:
+        params["item_value"] = round(float(body.item_value), 2)
+        params["perk_kind"] = body.perk_kind or "money"
+        params["perk_value"] = body.perk_value or f"{float(body.item_value):.0f}"
+    if body.min_bid:
+        params["min_bid"] = round(max(0.0, float(body.min_bid)), 2)
+    dur = float(body.duration) if (body.duration and body.duration > 0) else AUCTION_DURATION
     with Session(engine()) as s:
-        a = Auction(title=(body.title or "Objet").strip()[:140], item_value=round(float(body.item_value), 2),
-                    min_bid=round(max(0.0, float(body.min_bid or 0)), 2), status="open", created_by=banker)
-        s.add(a)
-        s.flush()
-        _mail_clients(s, f"Nouvelle enchère : {a.title}",
-                      f"La banque met en vente « {a.title} » (valeur estimée {float(a.item_value):.0f} €). "
-                      f"Mise minimale {float(a.min_bid):.0f} €. Enchérissez depuis l'onglet Enchères !", "auction")
+        a = _create_auction(s, params, banker, 0, dur)
         aid = a.id
         s.commit()
     ws_manager.publish({"type": "auction", "op": "open", "id": aid})
@@ -1612,56 +1865,74 @@ def bank_create_auction(body: AuctionIn, banker: str = Depends(require_banker)):
     return {"id": aid, "status": "open"}
 
 
+def _auction_row(s, a, me: str):
+    top = s.execute(select(func.max(Bid.amount)).where(Bid.auction_id == a.id)).scalar()
+    mine = s.execute(select(func.max(Bid.amount)).where(
+        Bid.auction_id == a.id, Bid.username == me)).scalar() if me else None
+    secs = None
+    if a.ends_at is not None:
+        ends = a.ends_at if a.ends_at.tzinfo else a.ends_at.replace(tzinfo=dt.timezone.utc)
+        secs = max(0, round((ends - dt.datetime.now(dt.timezone.utc)).total_seconds()))
+    return {"id": a.id, "title": a.title, "item_value": float(a.item_value),
+            "min_bid": float(a.min_bid), "status": a.status,
+            "perk_kind": a.perk_kind or "money", "perk_value": a.perk_value or "",
+            "perk_label": _perk_label(a.perk_kind or "money", a.perk_value or ""),
+            "seconds_left": secs,
+            "highest_bid": float(top) if top is not None else None,
+            "my_bid": float(mine) if mine is not None else None,
+            "winner": a.winner,
+            "winning_bid": float(a.winning_bid) if a.winning_bid is not None else None}
+
+
 @app.get("/auctions")
-def list_auctions(user: str = Depends(current_user)):
-    """Enchères visibles par les joueurs (plus haute mise + ma mise, pas les noms)."""
+def list_auctions(authorization: str = Header(default=None), x_player: str = Header(default=None)):
+    """Enchères visibles par les joueurs ET les attaquants (clients via JWT, attaquants via X-Player)."""
+    try:
+        me, _kind = _bidder_identity(authorization, x_player)
+    except HTTPException:
+        me = None
     with Session(engine()) as s:
-        auctions = s.scalars(select(Auction).order_by(Auction.id.desc()).limit(30)).all()
-        out = []
-        for a in auctions:
-            top = s.execute(select(func.max(Bid.amount)).where(Bid.auction_id == a.id)).scalar()
-            mine = s.execute(select(func.max(Bid.amount)).where(
-                Bid.auction_id == a.id, Bid.username == user)).scalar()
-            out.append({"id": a.id, "title": a.title, "item_value": float(a.item_value),
-                        "min_bid": float(a.min_bid), "status": a.status,
-                        "highest_bid": float(top) if top is not None else None,
-                        "my_bid": float(mine) if mine is not None else None,
-                        "winner": a.winner,
-                        "winning_bid": float(a.winning_bid) if a.winning_bid is not None else None})
+        auctions = s.scalars(select(Auction).where(Auction.phish == 0)
+                             .order_by(Auction.id.desc()).limit(30)).all()
+        out = [_auction_row(s, a, me) for a in auctions]
     return {"auctions": out}
 
 
 @app.post("/auctions/{auction_id}/bid")
-def place_bid(auction_id: int, body: BidIn, user: str = Depends(current_user)):
+def place_bid(auction_id: int, body: BidIn, authorization: str = Header(default=None),
+              x_player: str = Header(default=None)):
+    """Enchérir (clients ET attaquants). Le solvable est vérifié ici et re-vérifié à la clôture."""
     amt = round(float(body.amount), 2)
     if amt <= 0:
         raise HTTPException(400, "mise invalide")
+    name, kind = _bidder_identity(authorization, x_player)
     with Session(engine()) as s:
-        u = _user_or_404(s, user)
-        if (u.role or "client") != "client":
-            raise HTTPException(403, "seuls les clients peuvent enchérir")
         a = s.scalar(select(Auction).where(Auction.id == auction_id))
-        if a is None or a.status != "open":
+        if a is None or a.status != "open" or a.phish:
             raise HTTPException(404, "enchère close ou introuvable")
-        acc = s.scalar(select(Account).where(Account.user_id == u.id))
-        if acc is None or float(acc.balance) < amt:
-            raise HTTPException(402, "solde insuffisant pour couvrir la mise")
+        if kind == "client":
+            u = s.scalar(select(User).where(User.username == name))
+            if u is None or (u.role or "client") != "client":
+                raise HTTPException(403, "seuls les clients et les attaquants peuvent enchérir")
+            acc = s.scalar(select(Account).where(Account.user_id == u.id))
+            if acc is None or float(acc.balance) < amt:
+                raise HTTPException(402, "solde insuffisant pour couvrir la mise")
+        else:  # attaquant : mise couverte par le butin
+            if _attacker_loot(name) < amt:
+                raise HTTPException(402, "butin insuffisant pour couvrir la mise")
         top = s.execute(select(func.max(Bid.amount)).where(Bid.auction_id == a.id)).scalar()
         floor = max(float(a.min_bid), float(top) if top is not None else 0.0)
         if amt <= floor:
             raise HTTPException(400, f"la mise doit dépasser {floor:.0f} €")
-        s.add(Bid(auction_id=a.id, username=user, amount=amt))
+        s.add(Bid(auction_id=a.id, username=name, amount=amt, bidder_kind=kind))
         s.commit()
     ws_manager.publish({"type": "auction", "op": "bid", "id": auction_id, "amount": amt})
-    return {"ok": True, "auction_id": auction_id, "amount": amt}
+    return {"ok": True, "auction_id": auction_id, "amount": amt, "bidder_kind": kind}
 
 
 @app.post("/bank/auctions/{auction_id}/close")
 def bank_close_auction(auction_id: int, banker: str = Depends(require_banker)):
-    """Clôture : le plus offrant SOLVABLE est débité de sa mise et crédité de la
-    valeur de l'objet (gain net = valeur - mise). Mail au gagnant."""
-    winner = None
-    winning_bid = None
+    """Clôture manuelle par le banquier (le moteur auto clôt déjà au timer)."""
     with Session(engine()) as s:
         a = s.scalar(select(Auction).where(Auction.id == auction_id).with_for_update())
         if a is None:
@@ -1670,32 +1941,8 @@ def bank_close_auction(auction_id: int, banker: str = Depends(require_banker)):
             raise HTTPException(400, "enchère non officielle (signalée frauduleuse) — non clôturable ici")
         if a.status == "closed":
             raise HTTPException(400, "enchère déjà close")
-        bids = s.scalars(select(Bid).where(Bid.auction_id == a.id)
-                         .order_by(Bid.amount.desc(), Bid.id.asc())).all()
-        val = float(a.item_value)
-        for b in bids:
-            wu = s.scalar(select(User).where(User.username == b.username))
-            if wu is None or (wu.role or "client") != "client":
-                continue
-            wacc = s.scalar(select(Account).where(Account.user_id == wu.id).with_for_update())
-            bid_amt = float(b.amount)
-            if wacc is None or float(wacc.balance) < bid_amt:
-                continue  # ne peut plus payer sa mise -> offrant suivant
-            wacc.balance = float(wacc.balance) - bid_amt + val
-            s.add(Transaction(account_id=wacc.id, amount=bid_amt, type="debit",
-                              recipient=f"ENCHÈRE « {a.title} » (mise)", status="completed"))
-            s.add(Transaction(account_id=wacc.id, amount=val, type="credit",
-                              recipient=f"ENCHÈRE « {a.title} » (objet)", status="completed"))
-            net = round(val - bid_amt, 2)
-            s.add(Mail(user_id=wu.id, subject=f"Enchère remportée : {a.title}",
-                       body=f"Félicitations ! Vous remportez « {a.title} » pour une mise de {bid_amt:.0f} €. "
-                            f"Objet crédité {val:.0f} € — gain net {net:+.0f} €.", kind="prize"))
-            winner = b.username
-            winning_bid = bid_amt
-            break
-        a.status = "closed"
-        a.winner = winner
-        a.winning_bid = winning_bid
+        winner = _award_auction(s, a)
+        winning_bid = float(a.winning_bid) if a.winning_bid is not None else None
         s.commit()
     ws_manager.publish({"type": "auction", "op": "close", "id": auction_id, "winner": winner})
     ws_manager.publish({"type": "mail"})
@@ -1712,11 +1959,11 @@ def bank_list_auctions(banker: str = Depends(require_banker)):
         for a in auctions:
             bids = s.scalars(select(Bid).where(Bid.auction_id == a.id)
                              .order_by(Bid.amount.desc()).limit(10)).all()
-            out.append({"id": a.id, "title": a.title, "item_value": float(a.item_value),
-                        "min_bid": float(a.min_bid), "status": a.status, "winner": a.winner,
-                        "winning_bid": float(a.winning_bid) if a.winning_bid is not None else None,
-                        "phish": bool(a.phish), "beneficiary": a.beneficiary,
-                        "bids": [{"username": b.username, "amount": float(b.amount)} for b in bids]})
+            row = _auction_row(s, a, None)
+            row.update({"phish": bool(a.phish), "beneficiary": a.beneficiary, "auto": bool(a.auto),
+                        "bids": [{"username": b.username, "amount": float(b.amount),
+                                  "kind": b.bidder_kind or "client"} for b in bids]})
+            out.append(row)
     return {"auctions": out}
 
 

@@ -1,0 +1,177 @@
+/* ======================================================================
+   Casino — animations CSS pures (dés 3D, roulette SVG, blackjack flip).
+   Thème cohérent avec le projet : ink #261E48, accent #4B3FA6,
+   lav #A1A6D4, lavsoft #EEF0F8. Aucune dépendance externe.
+   ====================================================================== */
+
+/* ---- Tapis / panneaux casino (fond sombre feutré) ---- */
+.casino-felt {
+  background:
+    radial-gradient(140% 110% at 50% -20%, rgba(161,166,212,.22), transparent 60%),
+    linear-gradient(165deg, #322c63 0%, #261E48 55%, #1b1536 100%);
+  border: 1px solid rgba(161,166,212,.18);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.06), 0 10px 30px -18px rgba(27,21,54,.7);
+}
+
+/* ---- Bannière de résultat ---- */
+@keyframes casino-pop {
+  0%   { opacity: 0; transform: translateY(6px) scale(.92); }
+  60%  { opacity: 1; transform: translateY(0)   scale(1.04); }
+  100% { opacity: 1; transform: translateY(0)   scale(1); }
+}
+.casino-result { animation: casino-pop .45s cubic-bezier(.2,.8,.25,1) both; }
+
+@keyframes casino-shimmer {
+  0% { background-position: -140% 0; }
+  100% { background-position: 240% 0; }
+}
+.casino-win-glow {
+  background-image: linear-gradient(100deg, transparent 30%, rgba(255,255,255,.55) 50%, transparent 70%);
+  background-size: 200% 100%;
+  animation: casino-shimmer 1.3s ease-in-out;
+}
+
+/* ======================================================================
+   DÉS — cube 3D
+   ====================================================================== */
+.dice-stage { perspective: 760px; width: 104px; height: 104px; }
+
+.dice-cube {
+  position: relative;
+  width: 104px; height: 104px;
+  transform-style: preserve-3d;
+  transition: transform 1.35s cubic-bezier(.16,.72,.18,1);
+  will-change: transform;
+}
+
+.die-face {
+  position: absolute;
+  width: 104px; height: 104px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  gap: 3px;
+  padding: 15px;
+  box-sizing: border-box;
+  border-radius: 18px;
+  background: linear-gradient(150deg, #ffffff 0%, #eef0f8 100%);
+  box-shadow: inset 0 0 0 2px rgba(255,255,255,.7), inset 0 -6px 14px rgba(38,30,72,.12);
+  backface-visibility: hidden;
+}
+
+.die-pip-cell { display: flex; align-items: center; justify-content: center; }
+.die-pip {
+  width: 17px; height: 17px; border-radius: 50%;
+  background: radial-gradient(circle at 34% 30%, #6a5ec9, #261E48 80%);
+  box-shadow: inset 0 1px 1px rgba(255,255,255,.4);
+}
+
+/* Placement des 6 faces (demi-arête = 52px) */
+.df-1 { transform: translateZ(52px); }
+.df-6 { transform: rotateY(180deg) translateZ(52px); }
+.df-3 { transform: rotateY(90deg)  translateZ(52px); }
+.df-4 { transform: rotateY(-90deg) translateZ(52px); }
+.df-2 { transform: rotateX(90deg)  translateZ(52px); }
+.df-5 { transform: rotateX(-90deg) translateZ(52px); }
+
+/* Ombre portée sous le dé qui pulse pendant le lancer */
+.dice-shadow {
+  width: 86px; height: 16px; border-radius: 50%;
+  background: radial-gradient(ellipse at center, rgba(0,0,0,.45), transparent 70%);
+  transition: transform 1.35s cubic-bezier(.16,.72,.18,1), opacity .4s;
+}
+.dice-rolling .dice-cube { transition-timing-function: cubic-bezier(.33,.08,.2,1); }
+
+/* ======================================================================
+   ROULETTE
+   ====================================================================== */
+.roulette-wrap { position: relative; width: 100%; max-width: 320px; aspect-ratio: 1; margin: 0 auto; }
+
+.roulette-wheel {
+  width: 100%; height: 100%;
+  transition: transform 4.3s cubic-bezier(.12,.68,.12,1);
+  will-change: transform;
+  filter: drop-shadow(0 12px 24px rgba(27,21,54,.45));
+}
+.roulette-ball-layer {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  transition: transform 4.7s cubic-bezier(.1,.62,.1,1);
+  will-change: transform;
+  pointer-events: none;
+}
+.roulette-ball {
+  fill: #fff;
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,.6));
+}
+/* Aiguille fixe en haut */
+.roulette-pointer {
+  position: absolute; top: -4px; left: 50%; transform: translateX(-50%);
+  width: 0; height: 0;
+  border-left: 11px solid transparent;
+  border-right: 11px solid transparent;
+  border-top: 18px solid #E7B53C;
+  filter: drop-shadow(0 2px 2px rgba(0,0,0,.5));
+  z-index: 3;
+}
+.roulette-hub {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+  width: 26%; height: 26%; border-radius: 50%;
+  background: radial-gradient(circle at 38% 32%, #5b4fc0, #261E48 75%);
+  box-shadow: 0 0 0 4px rgba(238,240,248,.14), inset 0 2px 6px rgba(255,255,255,.25);
+  z-index: 2;
+}
+
+/* ======================================================================
+   BLACKJACK — cartes
+   ====================================================================== */
+.bj-table { background:
+    radial-gradient(130% 120% at 50% 0%, rgba(161,166,212,.18), transparent 55%),
+    linear-gradient(165deg, #2d2758 0%, #211a42 100%); }
+
+.bj-card {
+  width: 58px; height: 84px; border-radius: 9px;
+  background: linear-gradient(160deg, #ffffff, #f1f2fa);
+  box-shadow: 0 4px 10px -3px rgba(0,0,0,.5), inset 0 0 0 1px rgba(38,30,72,.12);
+  position: relative; flex: 0 0 auto;
+  font-weight: 800; line-height: 1;
+}
+.bj-card .bj-rank-tl { position: absolute; top: 5px; left: 6px; font-size: 14px; }
+.bj-card .bj-rank-br { position: absolute; bottom: 5px; right: 6px; font-size: 14px; transform: rotate(180deg); }
+.bj-card .bj-suit-c  { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 30px; }
+.bj-red  { color: #E5484D; }
+.bj-blk  { color: #261E48; }
+
+/* Distribution : la carte arrive depuis le sabot (haut-droite) */
+@keyframes bj-deal {
+  from { opacity: 0; transform: translate(70px, -130px) rotate(16deg) scale(.88); }
+  to   { opacity: 1; transform: translate(0,0) rotate(0) scale(1); }
+}
+.bj-card.dealing { animation: bj-deal .5s cubic-bezier(.2,.85,.3,1) both; }
+
+/* Carte cachée du croupier : flip 3D */
+.bj-flip { perspective: 620px; width: 58px; height: 84px; flex: 0 0 auto; }
+.bj-flip-inner {
+  position: relative; width: 100%; height: 100%;
+  transform-style: preserve-3d;
+  transition: transform .62s cubic-bezier(.3,.8,.3,1);
+}
+.bj-flip.revealed .bj-flip-inner { transform: rotateY(180deg); }
+.bj-flip .bj-face {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  backface-visibility: hidden; border-radius: 9px;
+}
+.bj-flip .bj-back {
+  background:
+    repeating-linear-gradient(45deg, #4B3FA6 0 8px, #3d3390 8px 16px);
+  box-shadow: inset 0 0 0 3px rgba(238,240,248,.5), 0 4px 10px -3px rgba(0,0,0,.5);
+}
+.bj-flip .bj-back::after {
+  content: "★"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: rgba(238,240,248,.75); font-size: 22px;
+}
+.bj-flip .bj-front { transform: rotateY(180deg); }
+
+/* ---- Jetons de mise ---- */
+.chip-btn { transition: transform .12s ease, box-shadow .12s ease; }
+.chip-btn:active { transform: translateY(1px) scale(.97); }

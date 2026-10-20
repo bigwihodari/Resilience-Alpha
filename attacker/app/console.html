@@ -291,6 +291,12 @@
         </div>
         <div id="tz-phish" class="vrows" style="margin-top:8px"></div>
       </div>
+      <!-- Enchères officielles : miser son butin (PvP éco) -->
+      <div class="sub" style="grid-column:1/-1">
+        <h3>🔨 Enchères officielles (mise ton butin — PvP)</h3>
+        <div class="note" style="margin:0 0 8px">Rafle le cash ou prive les clients de leurs lots. La mise est réglée avec ton butin détenu.</div>
+        <div id="tz-auctions" class="vrows"><p class="note">Chargement…</p></div>
+      </div>
     </div>
   </div>
 </div>
@@ -635,6 +641,34 @@ async function loadPhish(){
   }catch(e){}
 }
 setInterval(loadPhish, 4000); loadPhish();
+
+async function loadAuctions(){
+  try{
+    const data = await (await fetch("/api/game/auctions")).json();
+    const list = (data.auctions||[]).filter(a=>a.status==="open");
+    const box=$("tz-auctions");
+    if(!list.length){ box.innerHTML='<p class="note">Aucune enchère en cours — une nouvelle arrive bientôt…</p>'; return; }
+    box.innerHTML="";
+    list.forEach(a=>{
+      const floor=Math.max(a.min_bid||0, a.highest_bid||0);
+      const sl=(a.seconds_left!=null)?(" · ⏳ "+a.seconds_left+"s"):"";
+      const hb=(a.highest_bid!=null)?(" · top "+Math.round(a.highest_bid)+"€"):"";
+      const row=document.createElement("div"); row.className="vrow"; row.style.flexWrap="wrap";
+      row.innerHTML='<span class="vname">'+a.title+' <span class="vstat">🎁 '+(a.perk_label||"")+'</span> '
+        +'<span class="vstat">min '+Math.round(a.min_bid||0)+'€'+hb+sl+'</span></span>'
+        +'<span style="display:flex;gap:6px"><input type="number" style="width:90px" id="au-'+a.id+'" value="'+Math.round(floor+10)+'" />'
+        +'<button class="vstop" data-id="'+a.id+'">🔨 Miser</button></span>';
+      box.appendChild(row);
+    });
+    box.querySelectorAll(".vstop").forEach(b=>b.onclick=async()=>{
+      const id=b.getAttribute("data-id");
+      await fetch("/api/game/bid",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({auction_id:+id, amount:+($("au-"+id).value)||0})});
+      loadAuctions(); pollGame();
+    });
+  }catch(e){}
+}
+setInterval(loadAuctions, 3000); loadAuctions();
 </script>
 </body>
 </html>

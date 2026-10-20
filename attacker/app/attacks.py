@@ -595,6 +595,23 @@ class GameController:
         self._event(f"Phishing refusé : {self._detail(r)}", "error")
         return {"error": self._detail(r)}
 
+    def auctions(self):
+        """Enchères officielles en cours — l'attaquant peut y miser son butin (PvP)."""
+        return self._get("/api/auctions")
+
+    def bid(self, auction_id, amount):
+        try:
+            amt = float(amount)
+            r = requests.post(f"{self.target}/api/auctions/{auction_id}/bid",
+                              json={"amount": amt}, headers=self._h(), timeout=6)
+        except Exception as e:  # noqa: BLE001
+            return {"error": str(e)}
+        if r.status_code == 200:
+            self._event(f"🔨 Mise de {amt:.0f}€ placée sur l'enchère #{auction_id}.", "success")
+            return r.json()
+        self._event(f"Enchère refusée : {self._detail(r)}", "error")
+        return {"error": self._detail(r)}
+
     def phishing_list(self):
         return self._get("/api/game/phishing")
 

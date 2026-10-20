@@ -24,9 +24,11 @@ export default function Dashboard() {
   const [liv, setLiv] = useState({ principal: { balance: 0, rate: 0 }, livrets: [], interval: 30 });
   const [shop, setShop] = useState({ items: [] });
   const [mail, setMail] = useState([]);
-  const [openMail, setOpenMail] = useState(null);
+  const [mailModal, setMailModal] = useState(null);
   const [auctions, setAuctions] = useState([]);
   const [quizzes, setQuizzes] = useState([]);
+  const [nowTick, setNowTick] = useState(Date.now());
+  const auctionsAt = useRef(Date.now());
   // paiement
   const [txs, setTxs] = useState([]);
   const [favs, setFavs] = useState([]);
@@ -43,25 +45,36 @@ export default function Dashboard() {
       listTx().catch(() => []), listFavorites().catch(() => []),
     ]);
     if (n) setNw(n); if (l) setLb(l); if (lv) setLiv(lv); if (sh) setShop(sh);
-    setMail(mb || []); setAuctions(au || []); setQuizzes(qz || []); setTxs(tx || []); setFavs(fv || []);
+    setMail(mb || []); setAuctions(au || []); auctionsAt.current = Date.now();
+    setQuizzes(qz || []); setTxs(tx || []); setFavs(fv || []);
   }
 
   useEffect(() => {
     refresh();
     const poll = setInterval(refresh, 5000);
+    const tick = setInterval(() => setNowTick(Date.now()), 1000);
     let ws, stopped = false, retry, ping;
     const connect = () => {
       try {
         const proto = location.protocol === "https:" ? "wss" : "ws";
         ws = new WebSocket(`${proto}://${location.host}/ws`);
         ws.onopen = () => { clearInterval(ping); ping = setInterval(() => { try { ws.send("ping"); } catch { /* */ } }, 25000); };
-        ws.onmessage = (e) => { try { const d = JSON.parse(e.data); if (["tx", "win", "mail", "auction", "quiz"].includes(d.type)) refresh(); } catch { /* */ } };
+        ws.onmessage = (e) => {
+          try {
+            const d = JSON.parse(e.data);
+            // Notifications live : enchère/quiz qui arrivent en direct.
+            if (d.type === "auction" && d.op === "open") flash("🔔 Nouvelle enchère dans le Marché !");
+            if (d.type === "quiz" && d.op === "open") flash("🧠 Nouveau quiz — réponds vite !");
+            if (d.type === "quiz" && d.op === "win" && d.winner && d.winner !== me) flash(`🧠 Quiz remporté par ${d.winner}`, "err");
+            if (["tx", "win", "mail", "auction", "quiz"].includes(d.type)) refresh();
+          } catch { /* */ }
+        };
         ws.onclose = () => { clearInterval(ping); if (!stopped) retry = setTimeout(connect, 2000); };
         ws.onerror = () => { try { ws.close(); } catch { /* */ } };
       } catch { retry = setTimeout(connect, 2000); }
     };
     connect();
-    return () => { stopped = true; clearInterval(poll); clearInterval(retry); clearInterval(ping); try { ws && ws.close(); } catch { /* */ } };
+    return () => { stopped = true; clearInterval(poll); clearInterval(tick); clearInterval(retry); clearInterval(ping); try { ws && ws.close(); } catch { /* */ } };
   }, []);
 
   async function act(fn, ok) { try { const r = await fn(); flash(typeof ok === "function" ? ok(r) : ok); await refresh(); } catch (e) { flash(e.message, "err"); } }
@@ -77,13 +90,16 @@ export default function Dashboard() {
     } catch (e) { flash(e.message, "err"); }
   }
   async function openMailItem(m) {
-    setOpenMail(openMail === m.id ? null : m.id);
-    if (!m.is_read) { try { await markMailRead(m.id); await refresh(); } catch { /* */ } }
+    setMailModal(m);
+    if (!m.read) { try { await markMailRead(m.id); await refresh(); } catch { /* */ } }
   }
+  // secondes restantes d'une enchère (timer local lissé entre deux refresh)
+  const secLeft = (a) => a.seconds_left == null ? null : Math.max(0, Math.round(a.seconds_left - (nowTick - auctionsAt.current) / 1000));
+  const perkColor = (k) => k === "upgrade" ? "bg-fuchsia-100 text-fuchsia-700" : k === "pct" ? "bg-amber-100 text-amber-700" : "bg-green-100 text-green-700";
 
   const progress = nw ? Math.min(100, (nw.networth / nw.target) * 100) : 0;
   const myRank = lb.board.findIndex((b) => b.name === me) + 1;
-  const unread = mail.filter((m) => !m.is_read).length;
+  const unread = mail.filter((m) => !m.read).length;
   const isFav = recipient && favs.some((f) => f.username === recipient);
 
   const TabBtn = ({ id, label, badge }) => (
@@ -137,6 +153,25 @@ export default function Dashboard() {
 
       {toast && <div className={`fixed bottom-24 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-xl shadow-lg text-sm font-semibold ${toast.type === "ok" ? "bg-green-600 text-white" : "bg-red-600 text-white"}`}>{toast.text}</div>}
 
+      {/* Modal e-mail : lecture + boutons d'action (enchère / quiz) */}
+      {mailModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setMailModal(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start gap-2">
+              <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${mailModal.kind === "auction" ? "bg-green-100 text-green-700" : mailModal.kind === "quiz" ? "bg-amber-100 text-amber-700" : mailModal.kind === "prize" ? "bg-fuchsia-100 text-fuchsia-700" : "bg-lavsoft text-accent"}`}>{mailModal.kind}</span>
+              <h3 className="font-extrabold text-ink flex-1 leading-tight">{mailModal.subject}</h3>
+              <button onClick={() => setMailModal(null)} className="text-ink/40 hover:text-ink text-2xl leading-none">×</button>
+            </div>
+            <p className="text-sm text-ink/80 mt-3 whitespace-pre-wrap">{mailModal.body}</p>
+            <div className="flex flex-wrap gap-2 mt-4">
+              {mailModal.kind === "auction" && <button onClick={() => { setTab("marche"); setMailModal(null); }} className="bg-accent text-white font-semibold px-4 py-2 rounded-lg hover:bg-ink text-sm">🔨 Accéder à l'enchère</button>}
+              {mailModal.kind === "quiz" && <button onClick={() => { setTab("marche"); setMailModal(null); }} className="bg-amber-500 text-white font-semibold px-4 py-2 rounded-lg hover:bg-amber-600 text-sm">🧠 Répondre au quiz</button>}
+              <button onClick={() => setMailModal(null)} className="bg-lavsoft text-accent font-semibold px-4 py-2 rounded-lg hover:bg-lav/40 text-sm">Fermer</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* LIVRETS & SHOP */}
       {tab === "livrets" && (
         <div className="grid md:grid-cols-2 gap-4">
@@ -169,15 +204,35 @@ export default function Dashboard() {
             ))}
             <button onClick={() => act(() => createLivret(), "Nouveau livret ouvert")} className="w-full bg-white border-2 border-dashed border-lav text-accent font-semibold py-2.5 rounded-2xl hover:bg-lavsoft">+ Ouvrir un livret</button>
           </div>
-          <div className="bg-white rounded-2xl shadow p-4 h-fit">
-            <div className="font-bold text-ink mb-3">🛒 Boutique</div>
-            <div className="space-y-2">
-              {shop.items.map((it) => (
-                <div key={it.ukey} className="flex items-center gap-3 border-b border-lavsoft pb-2">
-                  <div className="flex-1"><div className="font-semibold text-sm text-ink">{it.label} <span className="text-xs text-ink/40">niv {it.level}</span></div><div className="text-xs text-ink/50">{it.desc}</div></div>
-                  <button onClick={() => act(() => shopBuy(it.ukey), (r) => `${it.label} niv ${r.level}`)} className="text-xs bg-accent text-white font-semibold px-3 py-1.5 rounded-lg hover:bg-ink whitespace-nowrap">{euro(it.next_cost)}</button>
-                </div>
-              ))}
+          <div className="space-y-4">
+            <div className="bg-white rounded-2xl shadow p-4 h-fit">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="font-bold text-ink">🛒 Boutique</div>
+                {shop.discount > 0 && <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-fuchsia-100 text-fuchsia-700">Remise VIP −{shop.discount}%</span>}
+              </div>
+              <div className="space-y-2">
+                {shop.items.map((it) => (
+                  <div key={it.ukey} className="flex items-center gap-3 border-b border-lavsoft pb-2">
+                    <div className="flex-1"><div className="font-semibold text-sm text-ink">{it.label} <span className="text-xs text-ink/40">niv {it.level}</span></div><div className="text-xs text-ink/50">{it.desc}</div></div>
+                    <button onClick={() => act(() => shopBuy(it.ukey), (r) => `${it.label} niv ${r.level}`)} className="text-xs bg-accent text-white font-semibold px-3 py-1.5 rounded-lg hover:bg-ink whitespace-nowrap">{euro(it.next_cost)}</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="bg-gradient-to-br from-fuchsia-50 to-lavsoft rounded-2xl shadow p-4 h-fit border border-fuchsia-100">
+              <div className="font-bold text-ink mb-1">✨ Upgrades spéciales</div>
+              <div className="text-xs text-ink/50 mb-3">Impossibles à acheter — se gagnent uniquement aux enchères.</div>
+              <div className="space-y-2">
+                {(shop.specials || []).map((sp) => (
+                  <div key={sp.ukey} className="flex items-center gap-3">
+                    <span className="text-xl">{sp.icon}</span>
+                    <div className="flex-1">
+                      <div className="font-semibold text-sm text-ink">{sp.label} {sp.level > 0 ? <span className="text-xs text-fuchsia-600 font-bold">niv {sp.level}</span> : <span className="text-xs text-ink/30">non débloquée</span>}</div>
+                      <div className="text-xs text-ink/50">{sp.desc}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </div>
@@ -187,18 +242,30 @@ export default function Dashboard() {
       {tab === "marche" && (
         <div className="grid md:grid-cols-2 gap-4">
           <div className="space-y-3">
-            <div className="font-bold text-accent text-sm uppercase tracking-wide">Enchères</div>
-            {auctions.filter((a) => a.status === "open").length === 0 && <div className="text-sm text-ink/50">Aucune enchère en cours.</div>}
-            {auctions.filter((a) => a.status === "open").map((a) => (
-              <div key={a.id} className="bg-white rounded-2xl shadow p-4">
-                <div className="font-bold text-ink">{a.title}</div>
-                <div className="text-sm text-ink/60">Valeur {euro(a.item_value)} · mise min {euro(a.min_bid)}</div>
-                <div className="flex gap-2 mt-2 items-center">
-                  <input id={`bid-${a.id}`} type="number" defaultValue={a.min_bid || 50} className="w-24 border border-lav rounded-lg px-2 py-1.5 text-sm" />
-                  <button onClick={() => act(() => bidAuction(a.id, parseFloat(document.getElementById(`bid-${a.id}`).value)), "Enchère placée")} className="text-sm bg-accent text-white font-semibold px-3 py-1.5 rounded-lg hover:bg-ink">Enchérir</button>
+            <div className="font-bold text-accent text-sm uppercase tracking-wide">Enchères automatiques</div>
+            {auctions.filter((a) => a.status === "open").length === 0 && <div className="text-sm text-ink/50">Aucune enchère en cours — une nouvelle arrive bientôt…</div>}
+            {auctions.filter((a) => a.status === "open").map((a) => {
+              const sl = secLeft(a);
+              const floor = Math.max(a.min_bid || 0, a.highest_bid || 0);
+              return (
+                <div key={a.id} className="bg-white rounded-2xl shadow p-4">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-bold text-ink">{a.title}</span>
+                    <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${perkColor(a.perk_kind)}`}>🎁 {a.perk_label}</span>
+                    {sl != null && <span className={`ml-auto text-xs font-mono font-bold px-2 py-0.5 rounded-full ${sl <= 10 ? "bg-red-100 text-red-700 animate-pulse" : "bg-lavsoft text-accent"}`}>⏳ {sl}s</span>}
+                  </div>
+                  <div className="text-sm text-ink/60 mt-1">
+                    Mise min {euro(a.min_bid)}
+                    {a.highest_bid != null && <> · meilleure mise <b className="text-ink">{euro(a.highest_bid)}</b></>}
+                    {a.my_bid != null && <> · ta mise {euro(a.my_bid)}</>}
+                  </div>
+                  <div className="flex gap-2 mt-2 items-center">
+                    <input id={`bid-${a.id}`} type="number" defaultValue={Math.max(a.min_bid || 50, Math.round(floor + 10))} className="w-24 border border-lav rounded-lg px-2 py-1.5 text-sm" />
+                    <button onClick={() => act(() => bidAuction(a.id, parseFloat(document.getElementById(`bid-${a.id}`).value)), "Enchère placée")} className="text-sm bg-accent text-white font-semibold px-3 py-1.5 rounded-lg hover:bg-ink">Enchérir</button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
             <div className="font-bold text-accent text-sm uppercase tracking-wide mt-4">Quiz</div>
             {quizzes.filter((q) => q.status === "open").length === 0 && <div className="text-sm text-ink/50">Aucun quiz en cours.</div>}
             {quizzes.filter((q) => q.status === "open").map((q) => (
@@ -217,13 +284,13 @@ export default function Dashboard() {
             <div className="bg-white rounded-2xl shadow divide-y divide-lavsoft max-h-[32rem] overflow-auto">
               {mail.length === 0 && <div className="p-4 text-sm text-ink/50">Aucun message.</div>}
               {mail.map((m) => (
-                <button key={m.id} onClick={() => openMailItem(m)} className={`w-full text-left p-3 hover:bg-lavsoft/60 transition ${m.is_read ? "" : "bg-lavsoft/40"}`}>
+                <button key={m.id} onClick={() => openMailItem(m)} className={`w-full text-left p-3 hover:bg-lavsoft/60 transition ${m.read ? "" : "bg-lavsoft/40"}`}>
                   <div className="flex items-center gap-2">
-                    {!m.is_read && <span className="w-2 h-2 rounded-full bg-accent shrink-0"></span>}
-                    <span className="font-semibold text-sm text-ink">{m.subject}</span>
-                    <span className="ml-auto text-[10px] text-ink/40">{m.kind}</span>
+                    {!m.read && <span className="w-2 h-2 rounded-full bg-accent shrink-0"></span>}
+                    <span className="font-semibold text-sm text-ink truncate">{m.subject}</span>
+                    <span className="ml-auto text-[10px] text-ink/40 shrink-0">{m.kind}</span>
+                    <span className="text-ink/30 shrink-0">›</span>
                   </div>
-                  {openMail === m.id && <div className="text-xs text-ink/70 mt-1.5 whitespace-pre-wrap">{m.body}</div>}
                 </button>
               ))}
             </div>

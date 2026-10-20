@@ -134,6 +134,16 @@ def phishing_close(campaign_id: int):
     return game.phishing_close(campaign_id)
 
 
+@app.get("/api/game/auctions")
+def game_auctions():
+    return game.auctions()
+
+
+@app.post("/api/game/bid")
+def game_bid(body: dict = Body(default={})):
+    return game.bid(body.get("auction_id"), body.get("amount", 0))
+
+
 @app.post("/api/attack/stop")
 def attack_stop(body: dict = Body(default={})):
     stopped = ctrl.stop(body.get("type"))
