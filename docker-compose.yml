@@ -107,6 +107,9 @@ services:
       API_URL: http://api:8000
       AUTH_URL: http://auth:8000
       TG_INTERVAL: "1.5"
+      # Mode jeu (défaut) : lectures légères uniquement, AUCUNE transaction auto.
+      # Mettre TG_GAME_MODE=0 pour réactiver le trafic de démo complet (avec paiements).
+      TG_GAME_MODE: ${TG_GAME_MODE:-1}
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-internal-trusted-token}
     depends_on:
       - api
