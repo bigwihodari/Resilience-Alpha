@@ -9,7 +9,9 @@
   :root{ --bg:#0E1020; --panel:#171A2E; --line:#262a44; --txt:#E7E9F5; --muted:#9aa0c3;
          --red:#E5484D; --red2:#ff6b6f; --green:#3BD671; --amber:#E7B53C; --accent:#6C5CE7; }
   *{box-sizing:border-box} html{scroll-behavior:smooth}
-  body{margin:0;background:var(--bg);color:var(--txt);font-family:system-ui,Segoe UI,Roboto,sans-serif}
+  body{margin:0;background:var(--bg);color:var(--txt);font-family:system-ui,Segoe UI,Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  :where(button,a,input,select,textarea):focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
+  @media(prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
   .wrap{max-width:1000px;margin:0 auto;padding:16px}
   header{display:flex;align-items:center;gap:12px;padding:14px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
   header .dot{width:12px;height:12px;border-radius:50%;background:var(--muted)}
