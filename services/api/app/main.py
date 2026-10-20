@@ -9,6 +9,7 @@ import re
 import time
 import json
 import math
+import html
 import random
 import asyncio
 import threading
@@ -17,6 +18,7 @@ import datetime as dt
 import jwt
 import requests
 from fastapi import FastAPI, HTTPException, Depends, Header, Body, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy import (
     create_engine, Integer, String, Numeric, ForeignKey, DateTime, func, select, text,
@@ -2191,95 +2193,187 @@ def game_shop_buy(body: BuyIn):
             "next_cost": upg_cost(cfg["base"], cfg["growth"], lvl + 1), "loot": loot}
 
 
-# ---------------- P5 : phishing (fausses enchères) ----------------
+# ---------------- P5 : phishing — campagnes + fausse page d'enchère ----------------
+# Un attaquant crée une CAMPAGNE : un faux mail est envoyé aux clients ciblés avec
+# un lien vers une FAUSSE page d'enchère servie par le backend (/phish/{id}, marquée
+# en interne comme piège). Si une victime saisit sa mise, l'attaquant la VOLE à la
+# clôture (plafonné, tracé), sauf si l'anti-fraude détecte la campagne (proba qui
+# monte avec la suspicion -> métrique + blocage).
 class PhishIn(BaseModel):
-    target: str
     title: str | None = None
     item_value: float | None = None
     min_bid: float | None = 0
+    lure: str | None = None
+    targets: list[str] | None = None   # clients ciblés (vide/None = tous les clients)
 
 
-@app.post("/game/phish")
-def game_phish(body: PhishIn, request: Request, x_player: str = Header(default=None)):
-    """L'attaquant envoie un FAUX mail d'enchère à un client. S'il mord et enchérit,
-    sa mise sera VOLÉE à la clôture (sauf si l'anti-fraude détecte l'arnaque)."""
+def _phish_page_html(a) -> str:
+    """Fausse page d'enchère (auto-portée, aucun asset externe) servie à la victime."""
+    title = html.escape(a.title or "Enchère privée")
+    val = float(a.item_value)
+    minb = float(a.min_bid)
+    closed = a.status == "closed"
+    banner = ("<p class='closed'>Cette vente est terminée.</p>" if closed else
+              f"""<form id='f' onsubmit='return send(event)'>
+      <label>Votre identifiant client<input name='u' required></label>
+      <label>Votre mise (EUR)<input name='a' type='number' min='{minb or 1}' step='1' required></label>
+      <button type='submit'>Enchérir maintenant</button></form>
+    <p id='msg'></p>
+    <script>
+    async function send(e){{e.preventDefault();
+      const u=document.querySelector('[name=u]').value, a=parseFloat(document.querySelector('[name=a]').value);
+      const r=await fetch(location.pathname+'/bid',{{method:'POST',headers:{{'Content-Type':'application/json'}},
+        body:JSON.stringify({{username:u,amount:a}})}});
+      const j=await r.json(); document.getElementById('msg').textContent = j.message || JSON.stringify(j);
+      if(r.ok) document.getElementById('f').style.display='none';
+      return false;}}
+    </script>""")
+    return f"""<!doctype html><html lang=fr><head><meta charset=utf-8>
+<meta name=viewport content='width=device-width,initial-scale=1'>
+<title>{title} — Enchère exclusive</title>
+<style>
+ body{{font-family:Montserrat,system-ui,sans-serif;background:#E4E6F3;color:#261E48;margin:0;padding:24px}}
+ .card{{max-width:460px;margin:24px auto;background:#fff;border-radius:14px;padding:28px;
+   box-shadow:0 10px 30px rgba(38,30,72,.15)}}
+ h1{{margin:0 0 4px;font-size:1.3rem}} .v{{font-size:2rem;font-weight:800;color:#261E48}}
+ label{{display:block;margin:14px 0 4px;font-size:.9rem}} input{{width:100%;padding:10px;border:1px solid #A1A6D4;
+   border-radius:8px;box-sizing:border-box}} button{{margin-top:16px;width:100%;padding:12px;border:0;
+   border-radius:8px;background:#261E48;color:#fff;font-weight:700;cursor:pointer}}
+ .badge{{display:inline-block;background:#A1A6D4;color:#261E48;border-radius:999px;padding:2px 10px;font-size:.75rem}}
+ .closed{{color:#a33;font-weight:700}} small{{color:#6a6f99}}
+</style></head><body><div class=card>
+ <span class=badge>Enchère privée VIP</span>
+ <h1>{title}</h1>
+ <p>Valeur estimée <span class=v>{val:.0f} €</span> · mise min. {minb:.0f} €</p>
+ {banner}
+ <p><small>Offre réservée — accès personnel. (Démo pédagogique : page piège de phishing.)</small></p>
+</div></body></html>"""
+
+
+@app.post("/game/phishing")
+def game_phishing(body: PhishIn, request: Request, x_player: str = Header(default=None)):
+    """Crée une CAMPAGNE de phishing : fausse enchère (piège) + faux mail d'invitation
+    envoyé aux clients ciblés, avec le lien vers la fausse page /phish/{id}."""
     actor, is_primary = _resolve_actor(request, x_player)
     cd = _actor_cooldown(actor, is_primary)
     if cd > 0:
         raise HTTPException(403, f"attaquant bloqué — cooldown {cd}s")
-    target = (body.target or "").strip()
     title = (body.title or "Offre VIP exceptionnelle").strip()[:140]
     val = round(float(body.item_value or 1000), 2)
+    minb = round(max(0.0, float(body.min_bid or 0)), 2)
+    lure = (body.lure or "").strip()[:400]
+    wanted = [t.strip() for t in (body.targets or []) if t and t.strip()]
     with Session(engine()) as s:
-        tu = s.scalar(select(User).where(User.username == target))
-        if tu is None or (tu.role or "client") != "client":
-            raise HTTPException(400, "cible invalide — un client existant est requis")
-        a = Auction(title=title, item_value=val, min_bid=round(max(0.0, float(body.min_bid or 0)), 2),
+        a = Auction(title=title, item_value=val, min_bid=minb,
                     status="open", created_by=actor, phish=1, beneficiary=actor)
         s.add(a)
         s.flush()
         aid = a.id
-        s.add(Mail(user_id=tu.id, subject=f"Enchere privee VIP : {title}",
-                   body=f"Felicitations {target} ! Vous etes selectionne pour l'enchere privee "
-                        f"« {title} » (valeur estimee {val:.0f} EUR). Enchere #{aid} ouverte dans "
-                        f"l'onglet Encheres — placez vite votre mise pour la remporter !", kind="auction"))
+        if wanted:
+            clients = s.scalars(select(User).where(User.username.in_(wanted),
+                                                   User.role == "client")).all()
+        else:
+            clients = s.scalars(select(User).where(User.role == "client")).all()
+        link = f"/phish/{aid}"
+        base = lure or (f"Felicitations ! Vous etes selectionne pour l'enchere privee "
+                        f"« {title} » (valeur estimee {val:.0f} EUR).")
+        for cu in clients:
+            s.add(Mail(user_id=cu.id, subject=f"Invitation VIP : {title}",
+                       body=f"{base}\nAcceder a votre enchere personnelle : {link}", kind="auction"))
+        targeted = [cu.username for cu in clients]
         s.commit()
     GAME_PHISH.labels(result="sent").inc()
-    _bump_suspicion(actor, 0.08, _actor_ip(request), "phishing envoyé")
+    _bump_suspicion(actor, 0.08, _actor_ip(request), "campagne de phishing envoyée")
     ws_manager.publish({"type": "mail"})
-    ws_manager.publish({"type": "auction", "op": "open", "id": aid})
-    print(f"[GAME] PHISH sent by={actor} target={target} auction={aid}", flush=True)
-    return {"ok": True, "auction_id": aid, "target": target, **_game_public()}
+    print(f"[GAME] PHISH campaign by={actor} id={aid} targets={len(targeted)}", flush=True)
+    return {"ok": True, "campaign_id": aid, "page": link, "targeted": targeted,
+            "count": len(targeted), **_game_public()}
 
 
-@app.get("/game/phish")
-def game_phish_list(request: Request, x_player: str = Header(default=None)):
-    """Fausses enchères de l'attaquant + plus haute mise (pour savoir quand clôturer)."""
+@app.get("/game/phishing")
+def game_phishing_list(request: Request, x_player: str = Header(default=None)):
+    """Campagnes de l'attaquant + nombre de victimes ayant mordu + butin volé."""
     actor, _ = _resolve_actor(request, x_player)
     with Session(engine()) as s:
         rows = s.scalars(select(Auction).where(Auction.phish == 1, Auction.beneficiary == actor)
                          .order_by(Auction.id.desc()).limit(20)).all()
         out = []
         for a in rows:
-            tb = s.scalar(select(Bid).where(Bid.auction_id == a.id)
-                          .order_by(Bid.amount.desc(), Bid.id.asc()))
-            out.append({"id": a.id, "title": a.title, "status": a.status,
-                        "top_bid": float(tb.amount) if tb else None,
-                        "top_bidder": tb.username if tb else None,
+            biters = s.scalars(select(func.count(func.distinct(Bid.username)))
+                               .where(Bid.auction_id == a.id)).first()
+            out.append({"id": a.id, "title": a.title, "status": a.status, "page": f"/phish/{a.id}",
+                        "biters": int(biters or 0),
                         "stolen": float(a.winning_bid) if (a.status == "closed" and a.winning_bid) else None})
-    return {"phish": out}
+    return {"campaigns": out}
 
 
-@app.post("/game/phish/{auction_id}/close")
-def game_phish_close(auction_id: int, request: Request, x_player: str = Header(default=None)):
-    """Clôture d'une fausse enchère : la mise du plus offrant est VOLÉE (ajoutée au
-    butin), SAUF si l'anti-fraude détecte l'arnaque (proba qui monte avec la suspicion)."""
+@app.get("/phish/{auction_id}", response_class=HTMLResponse)
+def phish_page(auction_id: int):
+    """Fausse page d'enchère servie par le backend (le piège sur lequel la victime
+    atterrit depuis le faux mail). Marquée en interne comme phishing."""
+    with Session(engine()) as s:
+        a = s.scalar(select(Auction).where(Auction.id == auction_id, Auction.phish == 1))
+        if a is None:
+            return HTMLResponse("<h1>Enchère introuvable</h1>", status_code=404)
+        page = _phish_page_html(a)
+    return HTMLResponse(page)
+
+
+class PhishBidIn(BaseModel):
+    username: str
+    amount: float
+
+
+@app.post("/phish/{auction_id}/bid")
+def phish_bid(auction_id: int, body: PhishBidIn):
+    """Saisie de la victime sur la fausse page : on enregistre sa mise (débit différé
+    à la clôture). Non authentifié par conception (page piège externe)."""
+    uname = (body.username or "").strip()
+    amount = round(float(body.amount or 0), 2)
+    with Session(engine()) as s:
+        a = s.scalar(select(Auction).where(Auction.id == auction_id, Auction.phish == 1))
+        if a is None:
+            raise HTTPException(404, "enchère introuvable")
+        if a.status == "closed":
+            raise HTTPException(400, "cette vente est terminée")
+        u = s.scalar(select(User).where(User.username == uname))
+        if u is None or (u.role or "client") != "client":
+            raise HTTPException(400, "identifiant inconnu")
+        if amount <= 0 or amount < float(a.min_bid):
+            raise HTTPException(400, f"mise minimale {float(a.min_bid):.0f} EUR")
+        s.add(Bid(auction_id=a.id, username=uname, amount=amount))
+        s.commit()
+    GAME_PHISH.labels(result="bite").inc()
+    print(f"[GAME] PHISH bite auction={auction_id} victim={uname} amount={amount}", flush=True)
+    return {"ok": True, "message": "Mise enregistree ! Vous serez recontacte a la cloture de l'enchere."}
+
+
+@app.post("/game/phishing/{auction_id}/close")
+def game_phishing_close(auction_id: int, request: Request, x_player: str = Header(default=None)):
+    """Clôture de campagne : la mise de CHAQUE victime solvable est VOLÉE (plafonné
+    par le cap du butin), SAUF si l'anti-fraude détecte l'arnaque (proba qui monte
+    avec la suspicion de l'attaquant) -> rien volé, victimes alertées, blocage probable."""
     actor, is_primary = _resolve_actor(request, x_player)
     cd = _actor_cooldown(actor, is_primary)
     if cd > 0:
         raise HTTPException(403, f"attaquant bloqué — cooldown {cd}s")
+    with game_lock:
+        cap_left = GAME_LOOT_CAP - game_state["loot"] - game_state["loot_neutralized"]
+    victims = []
+    all_biters = []
+    detected = False
     with Session(engine()) as s:
         a = s.scalar(select(Auction).where(Auction.id == auction_id, Auction.phish == 1).with_for_update())
         if a is None:
-            raise HTTPException(404, "fausse enchère introuvable")
+            raise HTTPException(404, "campagne introuvable")
         if a.beneficiary != actor:
-            raise HTTPException(403, "ce n'est pas ta fausse enchère")
+            raise HTTPException(403, "ce n'est pas ta campagne")
         if a.status == "closed":
-            raise HTTPException(400, "fausse enchère déjà close")
-        bids = s.scalars(select(Bid).where(Bid.auction_id == a.id)
-                         .order_by(Bid.amount.desc(), Bid.id.asc())).all()
-        victim_name = None
-        vacc = None
-        bid_amt = 0.0
-        for b in bids:
-            vu = s.scalar(select(User).where(User.username == b.username))
-            if vu is None or (vu.role or "client") != "client":
-                continue
-            acc = s.scalar(select(Account).where(Account.user_id == vu.id).with_for_update())
-            if acc is not None and float(acc.balance) >= float(b.amount):
-                victim_name, vacc, bid_amt, victim_id = vu.username, acc, float(b.amount), vu.id
-                break
-        if victim_name is None:  # personne n'a mordu (ou plus solvable)
+            raise HTTPException(400, "campagne déjà close")
+        rows = s.execute(select(Bid.username, func.max(Bid.amount)).where(Bid.auction_id == a.id)
+                         .group_by(Bid.username)).all()
+        all_biters = [r[0] for r in rows]
+        if not rows:
             a.status = "closed"
             s.commit()
             GAME_PHISH.labels(result="empty").inc()
@@ -2287,52 +2381,70 @@ def game_phish_close(auction_id: int, request: Request, x_player: str = Header(d
                     **_game_public()}
         score = _susp(actor)["score"]
         detected = random.random() <= min(0.95, PHISH_DETECT_BASE + 0.5 * score)
-        if detected:  # anti-fraude : rien volé, victime prévenue, suspicion explose
-            s.add(Mail(user_id=victim_id, subject="Alerte fraude : fausse enchere bloquee",
-                       body=f"Notre systeme anti-fraude a bloque une FAUSSE enchere « {a.title} » "
-                            f"qui vous visait. Aucun debit effectue. Mefiez-vous des offres trop belles.",
-                       kind="info"))
+        title = a.title
+        if detected:
+            for uname in all_biters:
+                vu = s.scalar(select(User).where(User.username == uname))
+                if vu is not None:
+                    s.add(Mail(user_id=vu.id, subject="Alerte fraude : fausse enchere bloquee",
+                               body=f"Notre systeme anti-fraude a bloque une FAUSSE enchere « {title} » "
+                                    f"qui vous visait. Aucun debit. Mefiez-vous des offres trop belles.",
+                               kind="info"))
             a.status = "closed"
             a.winner = None
             a.winning_bid = None
             s.commit()
-        else:  # arnaque réussie : la mise est volée (plafonnée par le cap du butin)
-            with game_lock:
-                cap_left = GAME_LOOT_CAP - game_state["loot"] - game_state["loot_neutralized"]
-            stolen = round(min(bid_amt, max(0.0, cap_left)), 2)
-            vacc.balance = float(vacc.balance) - stolen
-            s.add(Transaction(account_id=vacc.id, amount=stolen, type="debit",
-                              recipient=f"⚠ PHISHING « {a.title} » (jeu)", status="completed"))
-            s.add(Mail(user_id=victim_id, subject=f"Enchere « {a.title} » : debit de votre mise",
-                       body=f"Votre mise de {stolen:.0f} EUR a ete prelevee pour « {a.title} ». "
-                            f"(En realite : fausse enchere — vous avez ete victime d'un phishing.)",
-                       kind="info"))
+        else:
+            for uname, amt in rows:
+                vu = s.scalar(select(User).where(User.username == uname))
+                if vu is None or (vu.role or "client") != "client":
+                    continue
+                acc = s.scalar(select(Account).where(Account.user_id == vu.id).with_for_update())
+                if acc is None:
+                    continue
+                stolen = round(min(float(amt), float(acc.balance), max(0.0, cap_left)), 2)
+                if stolen <= 0:
+                    continue
+                acc.balance = float(acc.balance) - stolen
+                s.add(Transaction(account_id=acc.id, amount=stolen, type="debit",
+                                  recipient=f"⚠ PHISHING « {title} » (jeu)", status="completed"))
+                s.add(Mail(user_id=vu.id, subject=f"Enchere « {title} » : debit de votre mise",
+                           body=f"Votre mise de {stolen:.0f} EUR a ete prelevee pour « {title} ». "
+                                f"(En realite : fausse enchere — vous avez ete victime d'un phishing.)",
+                           kind="info"))
+                victims.append({"username": uname, "stolen": stolen})
+                cap_left -= stolen
             a.status = "closed"
-            a.winner = victim_name
-            a.winning_bid = stolen
+            a.winner = victims[0]["username"] if victims else None
+            a.winning_bid = round(sum(v["stolen"] for v in victims), 2) if victims else None
             s.commit()
     if detected:
         GAME_PHISH.labels(result="detected").inc()
-        _bump_suspicion(actor, 0.45, _actor_ip(request), "phishing détecté par l'anti-fraude")
+        _bump_suspicion(actor, 0.45, _actor_ip(request), "campagne de phishing détectée")
         blocked, _p = _maybe_block(actor, is_primary, "phishing détecté par l'anti-fraude")
         ws_manager.publish({"type": "mail"})
-        print(f"[GAME] PHISH DETECTED by={actor} auction={auction_id} victim={victim_name}", flush=True)
-        return {"ok": False, "result": "detected", "victim": victim_name,
-                "message": "Fraude détectée par l'anti-fraude — mise non volée, victime alertée.",
+        print(f"[GAME] PHISH DETECTED by={actor} campaign={auction_id} biters={len(all_biters)}", flush=True)
+        return {"ok": False, "result": "detected", "victims": all_biters,
+                "message": "Fraude détectée par l'anti-fraude — aucune mise volée, victimes alertées.",
                 "blocked_now": blocked, **_game_public()}
+    total = round(sum(v["stolen"] for v in victims), 2)
+    if total <= 0:
+        GAME_PHISH.labels(result="empty").inc()
+        return {"ok": True, "result": "empty", "message": "aucune victime solvable", **_game_public()}
     with game_lock:
-        game_state["loot"] = round(game_state["loot"] + stolen, 2)
-        game_state["exfiltrated_total"] = round(game_state["exfiltrated_total"] + stolen, 2)
+        game_state["loot"] = round(game_state["loot"] + total, 2)
+        game_state["exfiltrated_total"] = round(game_state["exfiltrated_total"] + total, 2)
         loot = game_state["loot"]
     GAME_LOOT.set(loot)
     GAME_PHISH.labels(result="success").inc()
     _bump_suspicion(actor, 0.15, _actor_ip(request), "phishing réussi")
     blocked, _p = _maybe_block(actor, is_primary, "phishing répété suspect")
     ws_manager.publish({"type": "mail"})
-    ws_manager.publish({"type": "tx", "from": victim_name, "to": "⚠ INCONNU", "amount": stolen, "op": "phish"})
+    ws_manager.publish({"type": "tx", "from": victims[0]["username"], "to": "⚠ INCONNU",
+                        "amount": total, "op": "phish"})
     _check_win()
-    print(f"[GAME] PHISH SUCCESS by={actor} victim={victim_name} stolen={stolen} loot={loot}", flush=True)
-    return {"ok": True, "result": "success", "victim": victim_name, "stolen": stolen,
+    print(f"[GAME] PHISH SUCCESS by={actor} campaign={auction_id} victims={len(victims)} total={total} loot={loot}", flush=True)
+    return {"ok": True, "result": "success", "victims": victims, "stolen_total": total,
             "loot": loot, "blocked_now": blocked, **_game_public()}
 
 
