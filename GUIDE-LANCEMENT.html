@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Guide de lancement — Resilience-Alpha</title>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#261E48; --bg:#E4E6F3; --card:#fff; --lav:#A1A6D4; --soft:#EEF0F8;
+    --accent:#4B3FA6; --green:#1E8E6A; --red:#C2413C; --amber:#B8840F; --line:#D4D7EC;
+    --shadow:0 2px 10px rgba(38,30,72,.08),0 10px 30px rgba(38,30,72,.06);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:"Montserrat",system-ui,Arial,sans-serif;line-height:1.55}
+  .wrap{max-width:960px;margin:0 auto;padding:16px 16px 80px}
+  a{color:var(--accent)}
+  code{background:var(--soft);padding:1px 6px;border-radius:5px;font-size:.92em}
+  pre{background:#1d1733;color:#EDEBFA;border-radius:10px;padding:12px 14px;overflow:auto;font-size:13px;margin:8px 0}
+  pre .c{color:#9b93c9}
+  .hero{background:linear-gradient(135deg,#2B2256,#4B3FA6);color:#fff;border-radius:20px;padding:30px 28px;margin-top:16px;box-shadow:var(--shadow)}
+  .hero h1{margin:.1em 0;font-size:clamp(24px,4.5vw,38px);font-weight:800}
+  .hero p{color:#E9E8F6;margin:.3em 0 0}
+  h2{font-size:clamp(19px,3vw,24px);font-weight:800;margin:34px 0 10px;display:flex;align-items:center;gap:10px}
+  h2 .n{flex:0 0 auto;width:32px;height:32px;border-radius:9px;background:var(--accent);color:#fff;display:grid;place-items:center;font-size:15px}
+  h3{font-size:16px;margin:16px 0 4px}
+  .card{background:var(--card);border-radius:14px;box-shadow:var(--shadow);padding:18px 20px;margin:12px 0}
+  .card.host{border-top:5px solid var(--accent)}
+  .card.backup{border-top:5px solid var(--amber)}
+  .card.client{border-top:5px solid var(--green)}
+  .card.att{border-top:5px solid var(--red)}
+  .role{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--accent)}
+  .card.backup .role{color:var(--amber)} .card.client .role{color:var(--green)} .card.att .role{color:var(--red)}
+  table{width:100%;border-collapse:collapse;background:var(--card);border-radius:12px;overflow:hidden;box-shadow:var(--shadow);margin:10px 0}
+  th,td{text-align:left;padding:10px 14px;font-size:14px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:var(--ink);color:#fff;font-weight:600}
+  tr:last-child td{border-bottom:none}
+  .toc{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:16px}
+  .toc a{display:block;background:var(--card);border-radius:12px;padding:12px 14px;text-decoration:none;color:var(--ink);box-shadow:var(--shadow);font-weight:600;font-size:14px}
+  .toc a span{display:block;font-size:12px;color:var(--ink);opacity:.55;font-weight:500}
+  .tip{background:#FFF6E6;border-left:5px solid var(--amber);border-radius:10px;padding:12px 14px;margin:12px 0;font-size:14px}
+  .warn{background:#FBE8E6;border-left:5px solid var(--red);border-radius:10px;padding:12px 14px;margin:12px 0;font-size:14px}
+  .ok{background:#E3F3EC;border-left:5px solid var(--green);border-radius:10px;padding:12px 14px;margin:12px 0;font-size:14px}
+  .step{display:flex;gap:12px;margin:10px 0}
+  .step .b{flex:0 0 auto;width:26px;height:26px;border-radius:50%;background:var(--soft);color:var(--accent);font-weight:800;display:grid;place-items:center;font-size:13px}
+  .url{font-weight:700;color:var(--accent)}
+  footer{margin-top:30px;color:#6a6594;font-size:12.5px;text-align:center}
+  @media(max-width:620px){pre{font-size:12px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <h1>🚀 Guide de lancement</h1>
+    <p>Resilience-Alpha — montage 5 PC. Suivez votre rôle, pas à pas.</p>
+  </header>
+
+  <div class="toc">
+    <a href="#prereq">① Sur chaque PC <span>Docker, Git, le projet</span></a>
+    <a href="#reseau">② Le réseau <span>point d'accès, IP, pare-feu</span></a>
+    <a href="#host">③ Host principal <span>serveur + cockpit</span></a>
+    <a href="#backup">④ Host backup <span>serveur de secours</span></a>
+    <a href="#client">⑤ Clients <span>app de paiement</span></a>
+    <a href="#att">⑥ Attaquant <span>console d'attaque</span></a>
+    <a href="#ordre">⑦ Ordre & dépannage</a>
+  </div>
+
+  <!-- 0 -->
+  <h2 id="prereq"><span class="n">1</span>Sur CHAQUE PC (une fois)</h2>
+  <div class="card">
+    <div class="step"><div class="b">1</div><div><b>Docker Desktop installé ET démarré</b> (icône 🐳 → « Engine running »).</div></div>
+    <div class="step"><div class="b">2</div><div><b>Git installé.</b></div></div>
+    <div class="step"><div class="b">3</div><div>Récupérer le projet (avec internet, WiFi de l'école) :
+      <pre>git clone https://github.com/bigwihodari/Resilience-Alpha.git
+cd Resilience-Alpha</pre>
+      <span class="c">Collègue sans GitHub : dézippez <code>Resilience-Alpha-complet.zip</code> et ouvrez le dossier.</span></div></div>
+    <div class="warn">⚠️ <b>Erreur n°1</b> : <code>error during connect … dockerDesktopLinuxEngine … cannot find the file</code> = <b>Docker Desktop n'est pas lancé</b>. Ouvrez-le, attendez « Engine running », réessayez.</div>
+    <div class="tip">💡 Le <b>tout premier lancement a besoin d'internet</b> (télécharge/construit les images). Faites-le <b>avant</b> de passer sur le point d'accès du groupe.</div>
+  </div>
+
+  <!-- 1 réseau -->
+  <h2 id="reseau"><span class="n">2</span>Le réseau du groupe (point d'accès)</h2>
+  <div class="card">
+    <h3>Point d'accès spécial, ou WiFi de l'école ?</h3>
+    <p>➡️ On utilise le <b>point d'accès mobile de Windows du PC principal</b>, <b>pas</b> le WiFi de
+    l'école (qui isole les PC entre eux → la démo ne marcherait pas). Le sujet l'impose.</p>
+
+    <h3>A. Ouvrir le point d'accès (sur le PC PRINCIPAL)</h3>
+    <div class="step"><div class="b">1</div><div><b>Paramètres → Réseau et Internet → Point d'accès sans fil mobile</b> → <b>Activer</b>.</div></div>
+    <div class="step"><div class="b">2</div><div><b>Modifier</b> : nom du réseau (SSID) = <code>RESILIENCE-G&lt;n&gt;</code> (votre n° de groupe) + un mot de passe.</div></div>
+    <div class="step"><div class="b">3</div><div>Partager depuis « Wi-Fi » : le principal peut rester sur le WiFi école (il partage sa connexion).<br>
+      <span class="c">Raccourci : <code>Win + A</code> → Point d'accès sans fil mobile.</span></div></div>
+
+    <h3>B. Connecter les 4 autres PC</h3>
+    <p>Backup, Client-A, Client-B, Attaquant : se connecter au Wi-Fi <code>RESILIENCE-G&lt;n&gt;</code>.</p>
+
+    <h3>C. Trouver les adresses IP (sur chaque PC)</h3>
+    <pre>ipconfig | findstr IPv4</pre>
+    <ul>
+      <li>Le <b>PC principal</b> (qui héberge le point d'accès) = <b>192.168.137.1</b>.</li>
+      <li>Les autres = <code>192.168.137.x</code> — <b>notez l'IP du backup</b> (ex. 192.168.137.2).</li>
+    </ul>
+
+    <h3>D. Pare-feu (si un PC n'atteint pas le serveur)</h3>
+    <p>Sur le <b>principal</b> et le <b>backup</b>, en PowerShell <b>administrateur</b> :</p>
+    <pre>netsh advfirewall firewall add rule name="Resilience-Alpha" dir=in action=allow protocol=TCP localport=8000,8001,8080,3000,9090</pre>
+    <p>Et passez le réseau <code>RESILIENCE-G&lt;n&gt;</code> en profil <b>Privé</b>.</p>
+  </div>
+
+  <!-- host -->
+  <h2 id="host"><span class="n">3</span>🖥️ HOST-PRINCIPAL (serveur principal)</h2>
+  <div class="card host">
+    <div class="role">Serveur principal + cockpit · IP 192.168.137.1</div>
+    <div class="step"><div class="b">1</div><div>Fichier <code>.env</code> (racine) :
+      <pre>ROLE=primary
+JWT_SECRET=choisir-un-secret-commun
+REPL_TOKEN=choisir-un-token-commun</pre>
+      <span class="c">Notez ces 2 valeurs : identiques sur le backup.</span></div></div>
+    <div class="step"><div class="b">2</div><div>Lancer : <code>.\start.ps1</code> <span class="c">(ou <code>./start.sh</code>)</span></div></div>
+    <div class="step"><div class="b">3</div><div>Vérifier : <a class="url" href="http://localhost:8080">http://localhost:8080</a> → cockpit (connexion <code>alice</code> / <code>password123</code>).</div></div>
+    <p class="c">Mettre à jour : <code>.\update.ps1</code> · Arrêter tout : <code>.\stop.ps1</code></p>
+  </div>
+
+  <!-- backup -->
+  <h2 id="backup"><span class="n">4</span>🖥️ HOST-BACKUP (serveur de secours)</h2>
+  <div class="card backup">
+    <div class="role">Réplique le principal, prend le relais s'il tombe</div>
+    <div class="step"><div class="b">1</div><div>Fichier <code>.env</code> (racine) — <b>mêmes secrets</b> que le principal :
+      <pre>ROLE=backup
+PEER_API_URL=http://192.168.137.1:8000
+JWT_SECRET=le-meme-que-le-principal
+REPL_TOKEN=le-meme-que-le-principal</pre></div></div>
+    <div class="step"><div class="b">2</div><div>Lancer : <code>.\start.ps1</code> (il affiche « rôle : backup »).</div></div>
+  </div>
+
+  <!-- client -->
+  <h2 id="client"><span class="n">5</span>👤 CLIENT-A &amp; CLIENT-B (app de paiement)</h2>
+  <div class="card client">
+    <div class="role">Login + recherche d'amis + paiement</div>
+    <div class="step"><div class="b">1</div><div><pre>cd client</pre></div></div>
+    <div class="step"><div class="b">2</div><div>Fichier <code>client/.env</code> (mettez l'IP réelle du backup) :
+      <pre>HOST_PRIMARY=192.168.137.1   HOST_PRIMARY_API_PORT=8000   HOST_PRIMARY_AUTH_PORT=8001
+HOST_BACKUP=192.168.137.2    HOST_BACKUP_API_PORT=8000    HOST_BACKUP_AUTH_PORT=8001</pre></div></div>
+    <div class="step"><div class="b">3</div><div>Lancer : <code>.\start.ps1</code></div></div>
+    <div class="step"><div class="b">4</div><div><a class="url" href="http://localhost:8095">http://localhost:8095</a> → connexion : <code>alice</code> sur A, <code>bob</code> sur B.</div></div>
+    <div class="step"><div class="b">5</div><div>Payer : chercher un nom (ex. <code>bob</code>), montant, <b>Payer</b>.</div></div>
+    <p class="c">Mettre à jour : <code>.\update.ps1</code> · Arrêter : <code>.\stop.ps1</code></p>
+  </div>
+
+  <!-- attaquant -->
+  <h2 id="att"><span class="n">6</span>⚔️ ATTAQUANT (console d'attaque)</h2>
+  <div class="card att">
+    <div class="role">Attaque le serveur principal — labo uniquement</div>
+    <div class="step"><div class="b">1</div><div><pre>cd attacker</pre></div></div>
+    <div class="step"><div class="b">2</div><div>Fichier <code>attacker/.env</code> :
+      <pre>TARGET_URL=http://192.168.137.1:8080
+TARGET_HOST=192.168.137.1</pre></div></div>
+    <div class="step"><div class="b">3</div><div>Lancer : <code>.\start.ps1</code> → <a class="url" href="http://localhost:8090">http://localhost:8090</a></div></div>
+    <div class="step"><div class="b">4</div><div>Choisir l'attaque (Saturation / Injection SQL), intensité, <b>Lancer</b>.</div></div>
+  </div>
+
+  <!-- ordre + dépannage -->
+  <h2 id="ordre"><span class="n">7</span>Ordre d'allumage &amp; dépannage</h2>
+  <div class="ok">
+    <b>Le jour J, dans l'ordre :</b>
+    <div class="step"><div class="b">1</div><div>Principal : ouvrir le point d'accès + <code>start.ps1</code> (vérifier le cockpit).</div></div>
+    <div class="step"><div class="b">2</div><div>Backup : se connecter au PA + <code>start.ps1</code>.</div></div>
+    <div class="step"><div class="b">3</div><div>Clients A/B : se connecter + <code>client/.env</code> + <code>start.ps1</code>.</div></div>
+    <div class="step"><div class="b">4</div><div>Attaquant : se connecter + <code>attacker/.env</code> + <code>start.ps1</code>.</div></div>
+    <div class="step"><div class="b">5</div><div>Démo : les clients se paient ; l'attaquant frappe le principal ; le cockpit montre détection → remédiation ; si le principal tombe, les clients basculent sur le backup.</div></div>
+  </div>
+
+  <table>
+    <tr><th>Problème</th><th>Solution</th></tr>
+    <tr><td><code>… dockerDesktopLinuxEngine … cannot find the file</code></td><td><b>Docker Desktop pas lancé.</b> Ouvrez-le, attendez « Engine running ».</td></tr>
+    <tr><td>Un client n'atteint pas le serveur</td><td>Mauvaise IP dans <code>client/.env</code>, pare-feu (§2-D), réseau non « Privé », ou pas sur le bon Wi-Fi.</td></tr>
+    <tr><td><code>port is already allocated</code></td><td>Un logiciel occupe le port → changez-le dans <code>.env</code> puis <code>.\update.ps1</code>.</td></tr>
+    <tr><td>Page lente au 1er chargement</td><td>Attendez 15-20 s puis rafraîchissez.</td></tr>
+    <tr><td>Repartir de zéro</td><td><code>docker compose down -v</code> puis <code>.\start.ps1</code>.</td></tr>
+    <tr><td>Assistant IA muet</td><td>Ollama doit tourner sur le PC Hôte avec <code>qwen3:8b</code>.</td></tr>
+  </table>
+
+  <footer>
+    Projet pédagogique — données et attaques fictives, limitées à votre labo.
+    Détails : README.md · DEPLOIEMENT.md · SECURITE.md
+  </footer>
+</div>
+</body>
+</html>
