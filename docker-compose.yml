@@ -220,6 +220,7 @@ services:
       LLM_MODEL: ${LLM_MODEL:-qwen2.5:7b-instruct-q4_K_M}
       EMB_MODEL: ${EMB_MODEL:-nomic-embed-text}
       KNOWLEDGE_DIR: /app/knowledge
+      LOKI_URL: ${LOKI_URL:-http://loki:3100}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
