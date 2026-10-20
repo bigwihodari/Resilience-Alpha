@@ -28,6 +28,15 @@ CREATE TABLE IF NOT EXISTS livrets (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Ameliorations achetees au shop (coSts exponentiels), par utilisateur/cle.
+CREATE TABLE IF NOT EXISTS upgrades (
+    id      SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    ukey    VARCHAR(32) NOT NULL,
+    level   INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (user_id, ukey)
+);
+
 -- Destinataires favoris (paiement en un clic, sans recherche).
 CREATE TABLE IF NOT EXISTS favorites (
     id           SERIAL PRIMARY KEY,

@@ -52,6 +52,33 @@ WIN_TARGET = float(os.environ.get("WIN_TARGET", "1000000"))
 game_winner = {"name": None, "camp": None, "networth": 0.0, "at": None}
 # Compte "banque" (coffre) : cible de hack haut-risque, exclu du jeu/leaderboard.
 BANK_USER = os.environ.get("BANK_USER", "trafficbot")
+
+# ---- Shop & upgrades (jeu idle) : coûts EXPONENTIELS cost = base * growth^niveau ----
+SHOP = {
+    "livret_slot": {"label": "Nouveau livret", "base": 500.0, "growth": 1.6,
+                    "desc": "Débloque un livret d'épargne supplémentaire."},
+    "global_mult": {"label": "Multiplicateur de production", "base": 1000.0, "growth": 1.5,
+                    "desc": "+10 % de production sur TOUS tes livrets, par niveau."},
+    "security":    {"label": "Coffre-fort", "base": 800.0, "growth": 1.45,
+                    "desc": "Réduit la probabilité de te faire voler, par niveau."},
+}
+LIVRET_RATE_BASE = 200.0      # coût de base pour booster le taux d'un livret
+LIVRET_RATE_GROWTH = 1.18
+LIVRET_RATE_STEP = 0.005      # +0.5 % de taux par niveau de boost
+BASE_LIVRET_SLOTS = 1         # livrets supplémentaires autorisés au départ (hors principal)
+
+
+def upg_cost(base, growth, level):
+    return round(float(base) * (float(growth) ** int(level)), 2)
+
+
+def _upg_level(s, user_id, ukey):
+    u = s.scalar(select(Upgrade).where(Upgrade.user_id == user_id, Upgrade.ukey == ukey))
+    return int(u.level) if u else 0
+
+
+def _global_mult(level):
+    return 1.0 + 0.10 * int(level)
 FAIL_PROMOTE = int(os.environ.get("FAIL_PROMOTE", "3"))       # échecs avant promotion du secours
 FAILBACK_CONFIRM = int(os.environ.get("FAILBACK_CONFIRM", "3"))  # cycles OK avant retour au principal
 repl_state = {"role": ROLE, "name": HA_NAME, "promoted": ROLE == "primary", "peer": PEER_API_URL,
@@ -173,6 +200,15 @@ class Livret(Base):
     balance: Mapped[float] = mapped_column(Numeric(14, 2), default=0)
     rate: Mapped[float] = mapped_column(Numeric(6, 4), default=0)   # taux par cycle propre
     level: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class Upgrade(Base):
+    """Niveau d'une amélioration achetée au shop (par utilisateur, par clé)."""
+    __tablename__ = "upgrades"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    ukey: Mapped[str] = mapped_column(String(32))
+    level: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class Transaction(Base):
@@ -310,6 +346,10 @@ def startup():
                        "name VARCHAR(40) NOT NULL DEFAULT 'Livret', balance NUMERIC(14,2) NOT NULL DEFAULT 0, "
                        "rate NUMERIC(6,4) NOT NULL DEFAULT 0, level INTEGER NOT NULL DEFAULT 1, "
                        "created_at TIMESTAMPTZ NOT NULL DEFAULT now())"))
+        c.execute(text("CREATE TABLE IF NOT EXISTS upgrades ("
+                       "id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, "
+                       "ukey VARCHAR(32) NOT NULL, level INTEGER NOT NULL DEFAULT 0, "
+                       "UNIQUE(user_id, ukey))"))
     # Compte BANQUE : le bot de trafic (trafficbot) est le coffre de la banque, pas un
     # joueur. On lui met le rôle 'bank' -> exclu du leaderboard/victoire/annuaire, mais
     # il reste une cible de hack très lucrative et très sécurisée (P3.5).
@@ -534,18 +574,23 @@ def list_livrets(user: str = Depends(current_user)):
         return {
             "principal": {"balance": float(acc.savings), "rate": savings_cfg["rate"]},
             "livrets": [{"id": lv.id, "name": lv.name, "balance": float(lv.balance),
-                         "rate": float(lv.rate), "level": lv.level} for lv in extras],
+                         "rate": float(lv.rate), "level": lv.level,
+                         "upgrade_cost": upg_cost(LIVRET_RATE_BASE, LIVRET_RATE_GROWTH, lv.level),
+                         "rate_step": LIVRET_RATE_STEP} for lv in extras],
             "interval": savings_cfg["interval"],
         }
 
 
 @app.post("/livrets")
 def create_livret(body: LivretIn, user: str = Depends(current_user)):
-    # P0 : création libre (P1 shop ajoutera le coût exponentiel). Taux = taux de base.
+    # Nombre de livrets autorisés = BASE + niveau de l'upgrade 'livret_slot' (acheté au shop).
     with Session(engine()) as s:
         u = _user_or_404(s, user)
-        n = s.scalar(select(func.count()).select_from(Livret).where(Livret.user_id == u.id)) or 0
-        name = (body.name or f"Livret {int(n) + 2}")[:40]
+        n = int(s.scalar(select(func.count()).select_from(Livret).where(Livret.user_id == u.id)) or 0)
+        allowed = BASE_LIVRET_SLOTS + _upg_level(s, u.id, "livret_slot")
+        if n >= allowed:
+            raise HTTPException(402, "achète un slot de livret au shop pour en ouvrir un de plus")
+        name = (body.name or f"Livret {n + 2}")[:40]
         lv = Livret(user_id=u.id, name=name, balance=0, rate=savings_cfg["rate"], level=1)
         s.add(lv)
         s.commit()
@@ -617,6 +662,75 @@ def leaderboard():
     return {"target": WIN_TARGET, "winner": game_winner if game_winner["name"] else None, "board": board[:20]}
 
 
+# -------- Shop & upgrades (coûts exponentiels) --------
+class BuyIn(BaseModel):
+    ukey: str
+
+
+@app.get("/shop")
+def shop(user: str = Depends(current_user)):
+    """Catalogue d'améliorations avec le niveau actuel et le PROCHAIN coût (par joueur)."""
+    with Session(engine()) as s:
+        u = _user_or_404(s, user)
+        items = []
+        for ukey, cfg in SHOP.items():
+            lvl = _upg_level(s, u.id, ukey)
+            items.append({"ukey": ukey, "label": cfg["label"], "desc": cfg["desc"],
+                          "level": lvl, "next_cost": upg_cost(cfg["base"], cfg["growth"], lvl)})
+    return {"items": items}
+
+
+@app.post("/shop/buy")
+def shop_buy(body: BuyIn, user: str = Depends(current_user)):
+    """Achat d'une amélioration : débite le compte courant (atomique), monte le niveau."""
+    cfg = SHOP.get(body.ukey)
+    if cfg is None:
+        raise HTTPException(404, "amélioration inconnue")
+    with Session(engine()) as s:
+        u = _user_or_404(s, user)
+        acc = s.scalar(select(Account).where(Account.user_id == u.id).with_for_update())
+        upg = s.scalar(select(Upgrade).where(Upgrade.user_id == u.id,
+                                             Upgrade.ukey == body.ukey).with_for_update())
+        level = int(upg.level) if upg else 0
+        cost = upg_cost(cfg["base"], cfg["growth"], level)
+        if float(acc.balance) < cost:
+            raise HTTPException(402, f"solde insuffisant (coût {cost} €)")
+        acc.balance = float(acc.balance) - cost
+        if upg is None:
+            s.add(Upgrade(user_id=u.id, ukey=body.ukey, level=1))
+        else:
+            upg.level = level + 1
+        s.commit()
+        new_balance = float(acc.balance)
+    ws_manager.publish({"type": "tx", "from": user, "to": "SHOP", "amount": cost, "op": "buy"})
+    return {"status": "ok", "ukey": body.ukey, "level": level + 1, "paid": cost,
+            "next_cost": upg_cost(cfg["base"], cfg["growth"], level + 1), "balance": new_balance}
+
+
+@app.post("/livrets/{livret_id}/upgrade")
+def livret_upgrade(livret_id: int, user: str = Depends(current_user)):
+    """Booste le taux de production d'un livret (+LIVRET_RATE_STEP), coût exponentiel."""
+    with Session(engine()) as s:
+        u = _user_or_404(s, user)
+        acc = s.scalar(select(Account).where(Account.user_id == u.id).with_for_update())
+        lv = s.scalar(select(Livret).where(Livret.id == livret_id,
+                                           Livret.user_id == u.id).with_for_update())
+        if acc is None or lv is None:
+            raise HTTPException(404, "livret introuvable")
+        cost = upg_cost(LIVRET_RATE_BASE, LIVRET_RATE_GROWTH, lv.level)
+        if float(acc.balance) < cost:
+            raise HTTPException(402, f"solde insuffisant (coût {cost} €)")
+        acc.balance = float(acc.balance) - cost
+        lv.rate = round(float(lv.rate) + LIVRET_RATE_STEP, 4)
+        lv.level = int(lv.level) + 1
+        s.commit()
+        out = {"id": lv.id, "level": lv.level, "rate": float(lv.rate), "paid": cost,
+               "next_cost": upg_cost(LIVRET_RATE_BASE, LIVRET_RATE_GROWTH, lv.level),
+               "balance": float(acc.balance)}
+    ws_manager.publish({"type": "tx", "from": user, "to": "SHOP", "amount": cost, "op": "upgrade"})
+    return out
+
+
 def _networth_row(balance, savings, livret_total):
     return round(float(balance) + float(savings) + float(livret_total), 2)
 
@@ -667,14 +781,17 @@ def savings_interest_loop():
         try:
             touched = False
             with Session(engine()) as s:
+                # Multiplicateur de production par utilisateur (upgrade 'global_mult').
+                mults = {uid: _global_mult(lvl) for uid, lvl in s.execute(
+                    select(Upgrade.user_id, Upgrade.level).where(Upgrade.ukey == "global_mult")).all()}
                 if rate > 0:
                     for a in s.scalars(select(Account).where(Account.savings > 0)).all():
-                        interest = round(float(a.savings) * rate, 2)
+                        interest = round(float(a.savings) * rate * mults.get(a.user_id, 1.0), 2)
                         if interest > 0:
                             a.savings = float(a.savings) + interest
                             touched = True
                 for lv in s.scalars(select(Livret).where(Livret.balance > 0, Livret.rate > 0)).all():
-                    interest = round(float(lv.balance) * float(lv.rate), 2)
+                    interest = round(float(lv.balance) * float(lv.rate) * mults.get(lv.user_id, 1.0), 2)
                     if interest > 0:
                         lv.balance = float(lv.balance) + interest
                         touched = True
