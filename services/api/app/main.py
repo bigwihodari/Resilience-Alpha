@@ -278,6 +278,34 @@ class Quiz(Base):
         DateTime(timezone=True), server_default=func.now())
 
 
+class ChatRoom(Base):
+    """Salon de discussion : 'global' (ouvert à tous) ou 'private' (membres choisis)."""
+    __tablename__ = "chat_rooms"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(64))
+    kind: Mapped[str] = mapped_column(String(12), default="private")  # global|private
+    owner: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now())
+
+
+class ChatMember(Base):
+    __tablename__ = "chat_members"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    room_id: Mapped[int] = mapped_column(ForeignKey("chat_rooms.id", ondelete="CASCADE"))
+    member: Mapped[str] = mapped_column(String(64))
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    room_id: Mapped[int] = mapped_column(ForeignKey("chat_rooms.id", ondelete="CASCADE"))
+    author: Mapped[str] = mapped_column(String(64))
+    body: Mapped[str] = mapped_column(String(1000))
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now())
+
+
 _engine = None
 
 
@@ -423,6 +451,18 @@ def startup():
                        "prize NUMERIC(14,2) NOT NULL, status VARCHAR(12) NOT NULL DEFAULT 'open', "
                        "winner VARCHAR(64), created_by VARCHAR(64) NOT NULL, "
                        "created_at TIMESTAMPTZ NOT NULL DEFAULT now())"))
+        # P2.5 — chat global + salons privés
+        c.execute(text("CREATE TABLE IF NOT EXISTS chat_rooms ("
+                       "id SERIAL PRIMARY KEY, name VARCHAR(64) NOT NULL, "
+                       "kind VARCHAR(12) NOT NULL DEFAULT 'private', owner VARCHAR(64) NOT NULL, "
+                       "created_at TIMESTAMPTZ NOT NULL DEFAULT now())"))
+        c.execute(text("CREATE TABLE IF NOT EXISTS chat_members ("
+                       "id SERIAL PRIMARY KEY, room_id INTEGER NOT NULL REFERENCES chat_rooms(id) ON DELETE CASCADE, "
+                       "member VARCHAR(64) NOT NULL, UNIQUE(room_id, member))"))
+        c.execute(text("CREATE TABLE IF NOT EXISTS chat_messages ("
+                       "id SERIAL PRIMARY KEY, room_id INTEGER NOT NULL REFERENCES chat_rooms(id) ON DELETE CASCADE, "
+                       "author VARCHAR(64) NOT NULL, body VARCHAR(1000) NOT NULL, "
+                       "created_at TIMESTAMPTZ NOT NULL DEFAULT now())"))
     # Compte BANQUE : le bot de trafic (trafficbot) est le coffre de la banque, pas un
     # joueur. On lui met le rôle 'bank' -> exclu du leaderboard/victoire/annuaire, mais
     # il reste une cible de hack très lucrative et très sécurisée (P3.5).
@@ -441,6 +481,15 @@ def startup():
                 vacc = s.scalar(select(Account).where(Account.user_id == vu.id)) if vu else None
                 if vacc is not None and float(vacc.savings) == 0:
                     vacc.savings = GAME_SEED_SAVINGS
+                    s.commit()
+        except Exception:  # noqa: BLE001
+            pass
+    # Salon global (ouvert à tous) : créé une seule fois.
+    if ROLE == "primary":
+        try:
+            with Session(engine()) as s:
+                if s.scalar(select(ChatRoom).where(ChatRoom.kind == "global")) is None:
+                    s.add(ChatRoom(name="Global", kind="global", owner="system"))
                     s.commit()
         except Exception:  # noqa: BLE001
             pass
@@ -1287,6 +1336,152 @@ def bank_list_quizzes(banker: str = Depends(require_banker)):
         rows = s.scalars(select(Quiz).order_by(Quiz.id.desc()).limit(20)).all()
     return {"quizzes": [{"id": q.id, "question": q.question, "answer": q.answer,
                          "prize": float(q.prize), "status": q.status, "winner": q.winner} for q in rows]}
+
+
+# ---------------- P2.5 : chat global + salons privés ----------------
+def chat_identity(authorization: str = Header(default=None),
+                  x_player: str = Header(default=None)) -> tuple:
+    """Identité pour le chat. JWT -> (username, role). Sinon invité (attaquant/
+    anonyme) via l'en-tête X-Player, à condition de NE PAS usurper un compte existant."""
+    if authorization and authorization.startswith("Bearer "):
+        try:
+            claims = jwt.decode(authorization.split(" ", 1)[1], JWT_SECRET, algorithms=[JWT_ALG])
+            return claims["sub"], claims.get("role", "client")
+        except Exception:  # noqa: BLE001
+            raise HTTPException(401, "invalid token")
+    name = (x_player or "").strip()[:32]
+    if not name:
+        raise HTTPException(401, "identité requise (connexion ou en-tête X-Player)")
+    with Session(engine()) as s:
+        if s.scalar(select(User).where(User.username == name)) is not None:
+            raise HTTPException(403, "ce pseudo correspond à un compte — connecte-toi")
+    return name, "invité"
+
+
+def _room_access(s, room: ChatRoom, me: str) -> bool:
+    if room is None:
+        return False
+    if room.kind == "global":
+        return True
+    if room.owner == me:
+        return True
+    return s.scalar(select(ChatMember).where(
+        ChatMember.room_id == room.id, ChatMember.member == me)) is not None
+
+
+class RoomIn(BaseModel):
+    name: str
+    members: list[str] | None = None
+
+
+class MemberIn(BaseModel):
+    member: str
+
+
+class MsgIn(BaseModel):
+    body: str
+
+
+@app.get("/chat/rooms")
+def chat_rooms(ident: tuple = Depends(chat_identity)):
+    """Salons visibles : le global + les salons privés dont je suis membre/propriétaire."""
+    me, _role = ident
+    with Session(engine()) as s:
+        rooms = s.scalars(select(ChatRoom).order_by(ChatRoom.id)).all()
+        out = []
+        for r in rooms:
+            if not _room_access(s, r, me):
+                continue
+            members = []
+            if r.kind != "global":
+                members = s.scalars(select(ChatMember.member).where(
+                    ChatMember.room_id == r.id).order_by(ChatMember.member)).all()
+            out.append({"id": r.id, "name": r.name, "kind": r.kind, "owner": r.owner,
+                        "members": list(members)})
+    return {"me": me, "rooms": out}
+
+
+@app.post("/chat/rooms")
+def chat_create_room(body: RoomIn, ident: tuple = Depends(chat_identity)):
+    """Crée un salon privé (le créateur en est membre) et ajoute les membres voulus."""
+    me, _role = ident
+    name = (body.name or "Salon").strip()[:64]
+    with Session(engine()) as s:
+        r = ChatRoom(name=name, kind="private", owner=me)
+        s.add(r)
+        s.flush()
+        wanted = set([me] + [m.strip()[:64] for m in (body.members or []) if m and m.strip()])
+        for m in wanted:
+            s.add(ChatMember(room_id=r.id, member=m))
+        rid = r.id
+        s.commit()
+    ws_manager.publish({"type": "chat", "op": "room", "id": rid})
+    return {"id": rid, "name": name, "kind": "private", "owner": me, "members": sorted(wanted)}
+
+
+@app.post("/chat/rooms/{room_id}/members")
+def chat_add_member(room_id: int, body: MemberIn, ident: tuple = Depends(chat_identity)):
+    """Ajoute un membre à un salon privé (propriétaire uniquement)."""
+    me, _role = ident
+    member = (body.member or "").strip()[:64]
+    if not member:
+        raise HTTPException(400, "membre invalide")
+    with Session(engine()) as s:
+        r = s.scalar(select(ChatRoom).where(ChatRoom.id == room_id))
+        if r is None or r.kind == "global":
+            raise HTTPException(404, "salon privé introuvable")
+        if r.owner != me:
+            raise HTTPException(403, "seul le propriétaire du salon peut ajouter des membres")
+        exists = s.scalar(select(ChatMember).where(
+            ChatMember.room_id == r.id, ChatMember.member == member))
+        if exists is None:
+            s.add(ChatMember(room_id=r.id, member=member))
+            try:
+                s.commit()
+            except IntegrityError:
+                s.rollback()
+    ws_manager.publish({"type": "chat", "op": "member", "id": room_id})
+    return {"ok": True, "room_id": room_id, "member": member}
+
+
+@app.get("/chat/rooms/{room_id}/messages")
+def chat_messages(room_id: int, after: int = 0, ident: tuple = Depends(chat_identity)):
+    """Messages d'un salon (contrôle d'accès). `after` pour un polling incrémental."""
+    me, _role = ident
+    with Session(engine()) as s:
+        r = s.scalar(select(ChatRoom).where(ChatRoom.id == room_id))
+        if not _room_access(s, r, me):
+            raise HTTPException(403, "accès refusé à ce salon")
+        rows = s.scalars(select(ChatMessage).where(
+            ChatMessage.room_id == room_id, ChatMessage.id > after)
+            .order_by(ChatMessage.id).limit(200)).all()
+        return {"room_id": room_id, "kind": r.kind, "messages": [
+            {"id": m.id, "author": m.author, "body": m.body,
+             "created_at": m.created_at.isoformat() if m.created_at else None} for m in rows]}
+
+
+@app.post("/chat/rooms/{room_id}/messages")
+def chat_post(room_id: int, body: MsgIn, ident: tuple = Depends(chat_identity)):
+    """Poste un message (contrôle d'accès). Diffusion WS live ; pour un salon privé
+    on ne diffuse PAS le contenu (juste une notification) — les écrans refetchent."""
+    me, _role = ident
+    txt = (body.body or "").strip()[:1000]
+    if not txt:
+        raise HTTPException(400, "message vide")
+    with Session(engine()) as s:
+        r = s.scalar(select(ChatRoom).where(ChatRoom.id == room_id))
+        if not _room_access(s, r, me):
+            raise HTTPException(403, "accès refusé à ce salon")
+        m = ChatMessage(room_id=room_id, author=me, body=txt)
+        s.add(m)
+        s.commit()
+        mid = m.id
+        kind = r.kind
+    evt = {"type": "chat", "op": "msg", "room": room_id, "kind": kind, "id": mid}
+    if kind == "global":
+        evt.update({"author": me, "body": txt})
+    ws_manager.publish(evt)
+    return {"ok": True, "id": mid, "room_id": room_id, "author": me, "body": txt}
 
 
 @app.get("/admin/integrity")

@@ -91,6 +91,30 @@ CREATE TABLE IF NOT EXISTS quizzes (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- P2.5 — chat global + salons prives (temps reel via WebSocket).
+CREATE TABLE IF NOT EXISTS chat_rooms (
+    id         SERIAL PRIMARY KEY,
+    name       VARCHAR(64) NOT NULL,
+    kind       VARCHAR(12) NOT NULL DEFAULT 'private',   -- global|private
+    owner      VARCHAR(64) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS chat_members (
+    id      SERIAL PRIMARY KEY,
+    room_id INTEGER NOT NULL REFERENCES chat_rooms(id) ON DELETE CASCADE,
+    member  VARCHAR(64) NOT NULL,
+    UNIQUE (room_id, member)
+);
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id         SERIAL PRIMARY KEY,
+    room_id    INTEGER NOT NULL REFERENCES chat_rooms(id) ON DELETE CASCADE,
+    author     VARCHAR(64) NOT NULL,
+    body       VARCHAR(1000) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS transactions (
     id         SERIAL PRIMARY KEY,
     account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
