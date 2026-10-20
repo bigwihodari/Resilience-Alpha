@@ -1,0 +1,18 @@
+# Démo « vitrine » : une application VIERGE (petit site statique), SANS aucune
+# sécurité propre. Sert à montrer qu'on pose Resilience Guard devant n'importe quoi.
+#
+#   cd demo-apps/vitrine
+#   docker compose up -d --build
+#   # -> http://localhost:8090  (c'est l'app NON protégée, en direct)
+#
+# Puis, depuis module/ : PROTECTED_UPSTREAM=http://host.docker.internal:8090
+# docker compose -f docker-compose.module.yml up -d --build
+#   # -> http://localhost:8080  (la même boutique, protégée par la passerelle)
+
+services:
+  vitrine:
+    build: .
+    container_name: demo-vitrine
+    ports:
+      - "${VITRINE_PORT:-8090}:80"
+    restart: unless-stopped

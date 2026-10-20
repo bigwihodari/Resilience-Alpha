@@ -1,0 +1,18 @@
+# Démo « paiement » : petite application métier AUTONOME (login + solde + paiement),
+# SANS les add-ons de jeu. Sert de « vraie » app à protéger pour la démo.
+#
+#   cd demo-apps/paiement
+#   docker compose up -d --build
+#   # -> http://localhost:8000  (l'app NON protégée, en direct)
+#
+# Puis, depuis module/ : PROTECTED_UPSTREAM=http://host.docker.internal:8000
+# docker compose -f docker-compose.module.yml up -d --build
+#   # -> http://localhost:8080  (la même app, protégée par la passerelle)
+
+services:
+  paiement:
+    build: .
+    container_name: demo-paiement
+    ports:
+      - "${PAIEMENT_PORT:-8000}:8000"
+    restart: unless-stopped
