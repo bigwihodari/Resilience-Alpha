@@ -8,6 +8,8 @@ le **prouve** en rejouant une transaction.
 > ⚠️ Environnement, données et attaques **entièrement fictifs**, strictement
 > limités au labo de l'équipe. Aucune donnée bancaire réelle.
 
+> 🚀 **Lancer la démo 5 PC ?** Guide pas-à-pas intuitif : [`GUIDE-LANCEMENT.md`](GUIDE-LANCEMENT.md).
+
 ## Architecture (en cours de construction)
 
 | Service | Rôle | Techno | État |
