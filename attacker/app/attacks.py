@@ -5,6 +5,7 @@ côté attaquant (requêtes envoyées, erreurs reçues, temps de réponse de la 
 Plusieurs vecteurs peuvent tourner SIMULTANÉMENT pour saturer le serveur primaire.
 Strictement limité au labo de l'équipe et à la cible configurée.
 """
+import os
 import threading
 import time
 import random
@@ -408,3 +409,159 @@ class AttackController:
             except Exception:
                 self._record(state, None, time.time() - t0, error=True)
             time.sleep(1.0)
+
+
+# ---------------------------------------------------------------------------
+# JEU DE HACKER — zone « Reconnaissance / Opération » de la console.
+# Progression : reconnaissance discrète -> ASTUCES (minuteur + succès) ->
+# petit vol plafonné -> si l'attaquant force, l'IA bloque (cooldown) + bascule.
+# L'état de la cible (butin, blocage, cooldown) est lu en direct côté cible ;
+# la progression locale (astuces, minuteur, journal) vit ici.
+# ---------------------------------------------------------------------------
+TIP_INTERVAL = float(os.environ.get("TIP_INTERVAL", "180"))  # minuteur d'astuce (s)
+
+TIPS = [
+    "Commence DISCRET : sonde la cible (bouton SONDER) pour cartographier les comptes clients. "
+    "Les attaques bruyantes te feront repérer par l'IA.",
+    "Sonde encore : repère la cible la plus intéressante et son solde approximatif. "
+    "Un flood léger du vecteur « Flood API » fait aussi fuiter des noms de comptes.",
+    "Vérifie si la cible possède un LIVRET d'épargne — une poche d'argent de plus à viser.",
+    "Assez d'infos ! Tente un PETIT retrait (bouton VOL) sur le compte courant. "
+    "Un montant modeste passe sous le radar de l'IA.",
+    "Le livret est vulnérable aussi : change la source sur « épargne ». "
+    "Mais chaque retrait augmente les soupçons…",
+    "DOSE ! Trop de retraits, un butin trop gros ou une attaque trop forte et l'IA te repère : "
+    "blocage (cooldown), bascule vers le secours et butin ANNULÉ. Joue fin.",
+]
+
+
+class GameController:
+    def __init__(self, target_url: str, attacks: "AttackController"):
+        self.target = target_url.rstrip("/")
+        self.attacks = attacks
+        self.lock = threading.Lock()
+        self.tips_revealed = 1                       # 1re astuce visible d'emblée
+        self.next_tip_at = time.time() + TIP_INTERVAL
+        self.last_target = {}
+        self.log = deque(maxlen=24)
+        self._was_blocked = False
+        self._event("Opération initialisée — objectif : exfiltrer un peu d'argent sans te faire repérer.", "info")
+        threading.Thread(target=self._bg, daemon=True).start()
+
+    def _event(self, msg, kind="info"):
+        with self.lock:
+            self.log.append({"t": time.strftime("%H:%M:%S"), "msg": msg, "kind": kind})
+
+    def _reveal_next(self):
+        with self.lock:
+            if self.tips_revealed < len(TIPS):
+                self.tips_revealed += 1
+            self.next_tip_at = time.time() + TIP_INTERVAL
+
+    def _fetch_target(self):
+        try:
+            r = requests.get(f"{self.target}/api/game/state", timeout=4)
+            if r.status_code == 200:
+                self.last_target = r.json()
+        except Exception:
+            pass
+        return self.last_target
+
+    def is_blocked(self):
+        return bool((self.last_target or {}).get("blocked"))
+
+    def _detail(self, r):
+        try:
+            return r.json().get("detail", f"HTTP {r.status_code}")
+        except Exception:
+            return f"HTTP {r.status_code}"
+
+    def recon(self):
+        if self.is_blocked():
+            self._event("Sonde refusée — attaquant bloqué (cooldown en cours).", "error")
+            return {"blocked": True, **self.state()}
+        try:
+            r = requests.post(f"{self.target}/api/game/recon", timeout=6)
+        except Exception as e:  # noqa: BLE001
+            self._event(f"Sonde échouée : {e}", "error")
+            return {"error": str(e), **self.state()}
+        if r.status_code == 200:
+            d = r.json()
+            self.last_target = d
+            self._event("🔍 Fuite obtenue : " + d.get("leaked", ""), "success")
+            self._reveal_next()
+            return {"ok": True, "leaked": d.get("leaked"), **self.state()}
+        self._event(f"Sonde refusée : {self._detail(r)}", "error")
+        return {"refused": True, "detail": self._detail(r), **self.state()}
+
+    def heist(self, amount=None, source="courant"):
+        if self.is_blocked():
+            self._event("Retrait refusé — attaquant bloqué (cooldown en cours).", "error")
+            return {"blocked": True, **self.state()}
+        try:
+            r = requests.post(f"{self.target}/api/game/heist",
+                              json={"amount": amount, "source": source}, timeout=6)
+        except Exception as e:  # noqa: BLE001
+            self._event(f"Retrait échoué : {e}", "error")
+            return {"error": str(e), **self.state()}
+        if r.status_code == 200:
+            d = r.json()
+            self.last_target = d
+            self._event(f"💰 Butin +{d.get('stolen', 0):.0f}€ ({source}) — total {d.get('loot', 0):.0f}€", "success")
+            self._reveal_next()
+            return {"ok": True, **d, **self.state()}
+        self._event(f"Retrait refusé : {self._detail(r)}", "error")
+        return {"refused": True, "detail": self._detail(r), **self.state()}
+
+    def state(self):
+        st = self.last_target or {}
+        now = time.time()
+        with self.lock:
+            revealed = self.tips_revealed
+            nxt = max(0, round(self.next_tip_at - now))
+            log = list(self.log)
+        all_done = revealed >= len(TIPS)
+        recon_count = st.get("recon_count", 0)
+        return {
+            "tips": TIPS[:revealed],
+            "tips_revealed": revealed,
+            "tips_total": len(TIPS),
+            "next_tip_in": 0 if all_done else nxt,
+            "all_tips": all_done,
+            "tip_interval": TIP_INTERVAL,
+            "log": log,
+            "target": {
+                "victim": st.get("victim", ""),
+                "loot": st.get("loot", 0), "loot_neutralized": st.get("loot_neutralized", 0),
+                "recon_count": recon_count, "heist_count": st.get("heist_count", 0),
+                "intel": st.get("intel", []),
+                "blocked": st.get("blocked", False),
+                "cooldown_remaining": st.get("cooldown_remaining", 0),
+                "block_reason": st.get("block_reason", ""),
+                "heist_max": st.get("heist_max", 0), "loot_cap": st.get("loot_cap", 0),
+                "loot_cap_remaining": st.get("loot_cap_remaining", 0),
+                "recon_needed": st.get("recon_needed", 0),
+                "ready_to_heist": recon_count >= st.get("recon_needed", 99),
+                "degraded": st.get("degraded", False),
+            },
+        }
+
+    def _bg(self):
+        while True:
+            time.sleep(1.0)
+            st = self._fetch_target()
+            # Astuce au minuteur (en plus des astuces débloquées par un succès).
+            with self.lock:
+                due = time.time() >= self.next_tip_at and self.tips_revealed < len(TIPS)
+            if due:
+                self._reveal_next()
+                self._event("🕑 Nouvelle astuce débloquée (minuteur).", "info")
+            # Blocage par l'IA : refuse et stoppe les attaques (cooldown visible).
+            blocked = bool(st.get("blocked"))
+            if blocked and not self._was_blocked:
+                self._was_blocked = True
+                self.attacks.stop()
+                self._event("⛔ REPÉRÉ ! L'IA a bloqué l'attaquant — attaques stoppées, cooldown en cours.", "error")
+            elif not blocked and self._was_blocked:
+                self._was_blocked = False
+                self._event("✅ Cooldown terminé — tu peux reprendre (mais reste discret).", "success")

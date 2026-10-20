@@ -12,6 +12,9 @@ services:
       TARGET_URL: ${TARGET_URL:-http://host.docker.internal:8080}
       # Adresse du poste Hôte pour les liens de supervision.
       TARGET_HOST: ${TARGET_HOST:-localhost}
+      # Jeu de hacker : minuteur d'astuce (s). Plusieurs minutes en démo réelle ;
+      # abaisser (ex. 45) pour une démo courte.
+      TIP_INTERVAL: ${TIP_INTERVAL:-180}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:

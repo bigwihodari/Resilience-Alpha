@@ -10,12 +10,13 @@ from fastapi import FastAPI, Body
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from attacks import AttackController
+from attacks import AttackController, GameController
 
 TARGET_URL = os.environ.get("TARGET_URL", "http://host.docker.internal:8080")
 TARGET_HOST = os.environ.get("TARGET_HOST", "") or TARGET_URL.split("//")[-1].split(":")[0]
 
 ctrl = AttackController(TARGET_URL)
+game = GameController(TARGET_URL, ctrl)
 app = FastAPI(title="Resilience-Alpha — Console Attaquant")
 
 _HERE = pathlib.Path(__file__).parent
@@ -42,6 +43,8 @@ def status():
 @app.post("/api/attack/start")
 def attack_start(body: dict = Body(default={})):
     # `types` (liste) a priorité, sinon `type` (str), sinon défaut ["dos_auth"].
+    if game.is_blocked():
+        return {"started": [], "blocked": True, **ctrl.status()}
     types = body.get("types")
     if not types:
         single = body.get("type")
@@ -52,8 +55,26 @@ def attack_start(body: dict = Body(default={})):
 
 @app.post("/api/attack/start_all")
 def attack_start_all(body: dict = Body(default={})):
+    if game.is_blocked():
+        return {"started": [], "blocked": True, **ctrl.status()}
     started = ctrl.start_all(body.get("intensity", 10), body.get("duration", 60))
     return {"started": started, **ctrl.status()}
+
+
+# ---------------- Zone jeu : reconnaissance / opération ----------------
+@app.get("/api/game/state")
+def game_state():
+    return game.state()
+
+
+@app.post("/api/game/recon")
+def game_recon():
+    return game.recon()
+
+
+@app.post("/api/game/heist")
+def game_heist(body: dict = Body(default={})):
+    return game.heist(body.get("amount"), body.get("source", "courant"))
 
 
 @app.post("/api/attack/stop")

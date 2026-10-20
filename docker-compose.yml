@@ -54,6 +54,11 @@ services:
       SAVINGS_RATE: ${SAVINGS_RATE:-0.01}
       SAVINGS_INTERVAL: ${SAVINGS_INTERVAL:-30}
       REPL_TOKEN: ${REPL_TOKEN:-repl-secret}
+      # Jeu de hacker : cible, plafonds du vol, dégradé/bascule (OFF par défaut).
+      GAME_VICTIM: ${GAME_VICTIM:-bob}
+      GAME_HEIST_MAX: ${GAME_HEIST_MAX:-120}
+      GAME_LOOT_CAP: ${GAME_LOOT_CAP:-400}
+      GAME_DEGRADE: ${GAME_DEGRADE:-0}
       # URL de l'api du PAIR pour la haute dispo :
       #  - sur le PRINCIPAL : URL du secours (ex. http://192.168.137.2:8000 ou,
       #    en test local, http://host.docker.internal:8010) -> pour l'affichage cluster.
@@ -196,6 +201,9 @@ services:
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-internal-trusted-token}
       CANARY_USER: ${CANARY_USER:-canary}
       CANARY_PASSWORD: ${CANARY_PASSWORD:-password123}
+      # Jeu de hacker : réglages de la détection de compromission + cooldown.
+      GAME_COOLDOWN: ${GAME_COOLDOWN:-120}
+      GAME_LOOT_ALERT: ${GAME_LOOT_ALERT:-200}
     depends_on:
       - detector
       - auth

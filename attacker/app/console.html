@@ -65,6 +65,50 @@
                color:var(--txt);border:0;cursor:pointer;flex:0 0 auto}
   .vrow .vstop:hover{background:#363c5e}
   @media(max-width:760px){.grid{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(2,1fr)}}
+
+  /* ---- Zone jeu : Reconnaissance / Opération ---- */
+  .gamezone{margin-top:16px;position:relative;overflow:hidden}
+  .gamezone h2{display:flex;align-items:center;gap:8px}
+  .gamegrid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .gkpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  .gkpi{background:#11142a;border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center}
+  .gkpi .n{font-size:20px;font-weight:800;color:var(--green)}
+  .gkpi .n.warn{color:var(--amber)}
+  .gkpi .l{font-size:10.5px;color:var(--muted);margin-top:2px}
+  .gactions{margin-top:12px;display:flex;flex-direction:column;gap:10px}
+  .gbtn{border:0;border-radius:10px;padding:11px;font-weight:800;cursor:pointer;font-size:14px;color:#fff}
+  .gbtn.recon{background:#2563c9} .gbtn.recon:hover{background:#3b7ae0}
+  .gbtn.vol{background:var(--red)} .gbtn.vol:hover{background:var(--red2)}
+  .gbtn:disabled{opacity:.4;cursor:not-allowed}
+  .heistrow{display:flex;gap:8px;flex-wrap:wrap}
+  .heistrow select,.heistrow input{flex:1;min-width:110px;background:#11142a;border:1px solid var(--line);
+    color:var(--txt);border-radius:8px;padding:9px}
+  .heistrow .gbtn{flex:1 0 100%}
+  .caps{font-size:11px;color:var(--muted);line-height:1.6}
+  .timer{margin-top:12px;font-size:13px;color:var(--muted);background:#11142a;border:1px solid var(--line);
+    border-radius:10px;padding:10px;text-align:center}
+  .timer b{color:var(--accent);font-size:16px}
+  .sub{margin-top:0} .sub h3{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 8px}
+  .tips{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:7px}
+  .tips li{font-size:12.5px;line-height:1.5;color:var(--txt)}
+  .tips li:last-child{color:var(--amber);font-weight:600}
+  .intel{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;max-height:150px;overflow:auto}
+  .intel li{font-size:12px;background:#11142a;border:1px solid var(--line);border-radius:8px;padding:7px 10px;color:#cfe3ff}
+  .intel li.muted{color:var(--muted)}
+  .oplog{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
+  .glog{max-height:140px;overflow:auto;display:flex;flex-direction:column;gap:4px}
+  .glog .gl{font-size:12px;display:flex;gap:8px}
+  .glog .gl .gt{color:var(--muted);flex:0 0 auto}
+  .gl.success .gm{color:var(--green)} .gl.error .gm{color:var(--red2)} .gl.info .gm{color:var(--txt)}
+  .neubanner{background:rgba(231,181,60,.12);border:1px solid var(--amber);color:var(--amber);
+    border-radius:10px;padding:9px 12px;font-size:12.5px;font-weight:600;margin:10px 0}
+  .cooldown{position:absolute;inset:0;background:rgba(14,16,32,.94);z-index:5;display:flex;
+    flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center}
+  .cooldown .big{font-size:22px;font-weight:900;color:var(--red2);letter-spacing:.5px}
+  .cooldown .cdt{font-size:48px;font-weight:900;color:#fff;font-variant-numeric:tabular-nums}
+  .cooldown .cdsub{font-size:13px;color:var(--muted);max-width:420px}
+  .hidden{display:none}
+  @media(max-width:760px){.gamegrid{grid-template-columns:1fr}.gkpis{grid-template-columns:repeat(2,1fr)}}
 </style>
 </head>
 <body>
@@ -116,6 +160,54 @@
       <div class="codes" id="codes">Codes de réponse : —</div>
       <h2 style="margin-top:18px">Vecteurs en cours</h2>
       <div class="vrows" id="vrows"><p class="note">Aucun vecteur actif.</p></div>
+    </div>
+  </div>
+
+  <!-- ============ ZONE JEU : Reconnaissance / Opération ============ -->
+  <div class="panel gamezone" id="gamezone">
+    <div class="cooldown hidden" id="cooldown">
+      <div class="big">⛔ REPÉRÉ — ATTAQUANT BLOQUÉ PAR L'IA</div>
+      <div class="cdt" id="cdtime">--:--</div>
+      <div class="cdsub" id="cdreason">Tes attaques sont refusées. L'IA a basculé sur le secours et neutralisé ton butin.</div>
+    </div>
+    <h2>🎯 Reconnaissance / Opération <span class="note" style="margin:0;text-transform:none;letter-spacing:0">— joue discret pour voler sans te faire repérer</span></h2>
+    <div class="neubanner hidden" id="neubanner"></div>
+    <div class="gamegrid">
+      <div>
+        <div class="gkpis">
+          <div class="gkpi"><div class="n" id="g-loot">0€</div><div class="l">butin détenu</div></div>
+          <div class="gkpi"><div class="n warn" id="g-neu">0€</div><div class="l">butin neutralisé</div></div>
+          <div class="gkpi"><div class="n" id="g-recon" style="color:var(--txt)">0</div><div class="l">sondes</div></div>
+          <div class="gkpi"><div class="n" id="g-heist" style="color:var(--txt)">0</div><div class="l">retraits</div></div>
+        </div>
+        <div class="gactions">
+          <button class="gbtn recon" id="btn-recon">🔍 SONDER la cible (reconnaissance)</button>
+          <div class="heistrow">
+            <select id="heist-src">
+              <option value="courant">compte courant</option>
+              <option value="epargne">livret d'épargne</option>
+            </select>
+            <input type="number" id="heist-amt" placeholder="montant € (défaut = max)" min="1" />
+            <button class="gbtn vol" id="btn-heist">💰 TENTER UN RETRAIT (vol)</button>
+          </div>
+          <div class="caps" id="g-caps">—</div>
+        </div>
+        <div class="timer">⏱ Prochaine astuce dans <b id="g-nexttip">--:--</b></div>
+      </div>
+      <div>
+        <div class="sub">
+          <h3>💡 Astuces <span id="g-tipn" style="color:var(--accent)"></span></h3>
+          <ol class="tips" id="g-tips"><li class="muted">…</li></ol>
+        </div>
+        <div class="sub" style="margin-top:14px">
+          <h3>🗂 Infos exfiltrées sur la cible</h3>
+          <ul class="intel" id="g-intel"><li class="muted">Aucune info — lance une sonde.</li></ul>
+        </div>
+      </div>
+    </div>
+    <div class="sub oplog">
+      <h3>📜 Journal d'opération</h3>
+      <div class="glog" id="g-log"></div>
     </div>
   </div>
 </div>
@@ -241,6 +333,91 @@ async function poll(){
 // Construit les vecteurs tôt via /api/config indisponible → on tente /api/status.
 fetch("/api/config").then(r=>r.json()).then(c=>{ $("target").textContent = c.target_url; }).catch(()=>{});
 setInterval(poll, 1000); poll();
+
+// ================= ZONE JEU : reconnaissance / opération =================
+function mmss(s){ s=Math.max(0,Math.round(s)); const m=Math.floor(s/60);
+  return String(m).padStart(2,"0")+":"+String(s%60).padStart(2,"0"); }
+
+$("btn-recon").onclick = async () => {
+  $("btn-recon").disabled = true;
+  try { await fetch("/api/game/recon",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"}); }
+  catch(e){}
+  pollGame();
+};
+$("btn-heist").onclick = async () => {
+  const amt = parseFloat($("heist-amt").value) || null;
+  const src = $("heist-src").value;
+  $("btn-heist").disabled = true;
+  try { await fetch("/api/game/heist",{method:"POST",headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({amount:amt, source:src})}); } catch(e){}
+  pollGame();
+};
+
+const kindClass = { success:"success", error:"error", alert:"error", action:"info", info:"info" };
+
+function renderGame(s){
+  const t = s.target || {};
+  $("g-loot").textContent  = (t.loot||0).toFixed(0)+"€";
+  $("g-neu").textContent   = (t.loot_neutralized||0).toFixed(0)+"€";
+  $("g-recon").textContent = t.recon_count||0;
+  $("g-heist").textContent = t.heist_count||0;
+
+  // Caps / état recon
+  const need = t.recon_needed||0, done = t.recon_count||0;
+  $("g-caps").innerHTML =
+    "Cible : <b style='color:var(--red2)'>"+(t.victim||"?")+"</b> · "
+    + "plafond/retrait "+(t.heist_max||0).toFixed(0)+"€ · butin max "+(t.loot_cap||0).toFixed(0)+"€ · "
+    + "reste "+(t.loot_cap_remaining||0).toFixed(0)+"€<br>"
+    + "reconnaissance : "+done+"/"+need+(done>=need?" ✓ (vol possible)":" (sonde encore pour voler)");
+
+  // Minuteur d'astuce
+  $("g-nexttip").textContent = s.all_tips ? "toutes débloquées ✓" : mmss(s.next_tip_in);
+  $("g-tipn").textContent = "("+s.tips_revealed+"/"+s.tips_total+")";
+
+  // Astuces
+  const tips = $("g-tips");
+  tips.innerHTML = "";
+  (s.tips||[]).forEach(txt => { const li=document.createElement("li"); li.textContent=txt; tips.appendChild(li); });
+
+  // Intel
+  const intel = $("g-intel");
+  if ((t.intel||[]).length){ intel.innerHTML=""; t.intel.forEach(x=>{
+    const li=document.createElement("li"); li.textContent=x; intel.appendChild(li); }); }
+  else intel.innerHTML = '<li class="muted">Aucune info — lance une sonde.</li>';
+
+  // Journal d'opération
+  const log = $("g-log");
+  log.innerHTML = "";
+  (s.log||[]).slice().reverse().forEach(e=>{
+    const d=document.createElement("div"); d.className="gl "+(kindClass[e.kind]||"info");
+    d.innerHTML='<span class="gt">'+e.t+'</span><span class="gm">'+e.msg+'</span>'; log.appendChild(d); });
+
+  // Butin neutralisé (bascule IA)
+  const nb=$("neubanner");
+  if ((t.loot_neutralized||0)>0){ nb.classList.remove("hidden");
+    nb.textContent="🛡 L'IA a basculé à temps : "+(t.loot_neutralized||0).toFixed(0)+"€ de butin restaurés sur le compte cible (ton vol a échoué)."; }
+  else nb.classList.add("hidden");
+
+  // Cooldown / blocage
+  const cd=$("cooldown");
+  const blocked = t.blocked;
+  if (blocked){
+    cd.classList.remove("hidden");
+    $("cdtime").textContent = mmss(t.cooldown_remaining||0);
+    $("cdreason").textContent = (t.block_reason? "Motif IA : "+t.block_reason+". " : "")
+      + "Tes attaques sont refusées pendant le cooldown.";
+  } else cd.classList.add("hidden");
+
+  // Activation des boutons
+  $("btn-recon").disabled = blocked;
+  $("btn-heist").disabled = blocked || (done < need);
+}
+
+async function pollGame(){
+  try{ renderGame(await (await fetch("/api/game/state")).json()); }
+  catch(e){ /* cible / console injoignable */ }
+}
+setInterval(pollGame, 1000); pollGame();
 </script>
 </body>
 </html>

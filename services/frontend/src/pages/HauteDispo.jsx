@@ -85,6 +85,9 @@ export default function HauteDispo() {
 
   const serving = cluster?.serving;
   const servingBackup = cluster?.secours?.name === serving && cluster?.secours?.promoted;
+  const compromise = rem?.compromise === "BLOCKED" || rem?.failover;
+  const cd = Math.max(0, Math.round(rem?.cooldown_remaining || 0));
+  const cdTxt = `${String(Math.floor(cd / 60)).padStart(2, "0")}:${String(cd % 60).padStart(2, "0")}`;
 
   // Fusion des événements de bascule (principal + secours), les plus récents d'abord.
   const events = [
@@ -102,6 +105,17 @@ export default function HauteDispo() {
           <span className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse"></span> Suivi live
         </span>
       </div>
+
+      {/* Bannière compromission (jeu de hacker) : bascule secours pour protéger l'argent */}
+      {compromise && (
+        <div className="rounded-2xl p-4 mb-4 text-center font-bold shadow bg-red-50 text-red-800 border border-red-300 animate-pulse">
+          ⚠ COMPROMISSION DÉTECTÉE PAR L'IA → bascule vers le SECOURS
+          <div className="text-sm font-semibold mt-1 text-red-700">
+            Attaquant bloqué{cd > 0 ? ` (cooldown ${cdTxt})` : ""}
+            {rem?.loot_neutralized > 0 ? ` · butin neutralisé ${Math.round(rem.loot_neutralized)}€ (argent protégé)` : ""}
+          </div>
+        </div>
+      )}
 
       {/* Bannière : qui sert le trafic */}
       <div className={`rounded-2xl p-4 mb-6 text-center font-bold shadow ${servingBackup ? "bg-amber-50 text-amber-800 border border-amber-300" : "bg-green-50 text-green-800 border border-green-200"}`}>

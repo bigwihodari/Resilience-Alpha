@@ -22,7 +22,7 @@ from sqlalchemy import (
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, Session
 from prometheus_fastapi_instrumentator import Instrumentator
-from prometheus_client import Counter
+from prometheus_client import Counter, Gauge
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 JWT_SECRET = os.environ.get("JWT_SECRET", "dev-secret")
@@ -42,6 +42,44 @@ FAIL_PROMOTE = int(os.environ.get("FAIL_PROMOTE", "3"))       # échecs avant pr
 FAILBACK_CONFIRM = int(os.environ.get("FAILBACK_CONFIRM", "3"))  # cycles OK avant retour au principal
 repl_state = {"role": ROLE, "name": HA_NAME, "promoted": ROLE == "primary", "peer": PEER_API_URL,
               "last_sync": None, "fails": 0, "events": []}
+
+# ----------------------------------------------------------------------------
+# JEU DE HACKER (zone spéciale de la console attaquant) — chemins EXPLOITABLES
+# PAR CONCEPTION, mais entièrement instrumentés (compteurs Prometheus + logs)
+# pour que la chaîne IA (detector/orchestrator) puisse détecter l'exploitation.
+# Tout est fictif / pédagogique. Les retraits du jeu sont PLAFONNÉS et atomiques.
+# ----------------------------------------------------------------------------
+GAME_VICTIM = os.environ.get("GAME_VICTIM", "bob")          # compte client ciblé
+GAME_HEIST_MAX = float(os.environ.get("GAME_HEIST_MAX", "120"))   # plafond PAR retrait (€)
+GAME_LOOT_CAP = float(os.environ.get("GAME_LOOT_CAP", "400"))     # plafond CUMULÉ du butin (€)
+GAME_RECON_FOR_HEIST = int(os.environ.get("GAME_RECON_FOR_HEIST", "3"))  # recon requis avant vol
+GAME_SEED_SAVINGS = float(os.environ.get("GAME_SEED_SAVINGS", "300"))    # livret initial de la victime
+# Dégradé/503 des endpoints métier lors d'une bascule (nginx proxy_next_upstream
+# -> secours). OFF par défaut (démo mono-machine stable) ; passer GAME_DEGRADE=1
+# sur un montage 2 PC avec un vrai secours pour une bascule réseau réelle.
+GAME_DEGRADE = os.environ.get("GAME_DEGRADE", "0") == "1"
+
+game_state = {
+    "victim": GAME_VICTIM,
+    "loot": 0.0,              # butin courant détenu par l'attaquant (non neutralisé)
+    "loot_neutralized": 0.0,  # butin repris par la défense (claw-back / intégrité)
+    "recon_count": 0,
+    "heist_count": 0,
+    "intel": [],              # infos révélées progressivement (fuite)
+    "blocked_until": 0.0,     # epoch ; > now => attaquant bloqué (cooldown)
+    "block_reason": "",
+    "heist_max": GAME_HEIST_MAX,
+    "loot_cap": GAME_LOOT_CAP,
+    "recon_needed": GAME_RECON_FOR_HEIST,
+}
+game_lock = threading.Lock()
+degraded = {"on": False}  # bascule : endpoints métier en 503 (gated par GAME_DEGRADE)
+
+GAME_RECON = Counter("game_recon_total", "Sondes de reconnaissance (jeu)")
+GAME_HEIST = Counter("game_heist_total", "Tentatives de retrait réussies (jeu)")
+GAME_HEIST_AMT = Counter("game_heist_amount_total", "Montant exfiltré cumulé (jeu)")
+GAME_LOOT = Gauge("game_loot_current", "Butin courant détenu par l'attaquant (jeu)")
+GAME_BLOCKED = Gauge("game_blocked", "1 si l'attaquant est bloqué par l'IA (jeu)")
 
 
 def ha_event(label, kind="info"):
@@ -72,6 +110,13 @@ def waf_scan(source: str, **fields):
                 WAF_BLOCKED.labels(rule=rule).inc()
                 print(f"[WAF] BLOCK rule={rule} source={source} field={name} value={value!r}", flush=True)
                 raise HTTPException(403, "requête bloquée par le WAF")
+
+
+def guard_degraded():
+    """Bascule : si le principal est en mode dégradé (compromission), les endpoints
+    métier répondent 503 -> nginx (proxy_next_upstream) bascule vers le secours."""
+    if degraded["on"]:
+        raise HTTPException(503, "noeud en mode dégradé — bascule secours en cours")
 
 
 class Base(DeclarativeBase):
@@ -232,6 +277,17 @@ def startup():
                        "id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, "
                        "fav_username VARCHAR(64) NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), "
                        "UNIQUE(user_id, fav_username))"))
+    # Livret initial pour la cible du jeu (fuite « présence d'un livret » + vol épargne).
+    if ROLE == "primary" and GAME_SEED_SAVINGS > 0:
+        try:
+            with Session(engine()) as s:
+                vu = s.scalar(select(User).where(User.username == GAME_VICTIM))
+                vacc = s.scalar(select(Account).where(Account.user_id == vu.id)) if vu else None
+                if vacc is not None and float(vacc.savings) == 0:
+                    vacc.savings = GAME_SEED_SAVINGS
+                    s.commit()
+        except Exception:  # noqa: BLE001
+            pass
     if ROLE == "backup" and PEER_API_URL:
         threading.Thread(target=replicate_loop, daemon=True).start()
     threading.Thread(target=savings_interest_loop, daemon=True).start()
@@ -258,6 +314,7 @@ def my_account(user: str = Depends(current_user)):
 
 @app.post("/transactions")
 def create_transaction(body: TxIn, user: str = Depends(current_user)):
+    guard_degraded()
     waf_scan("api/transactions", recipient=body.recipient or "")
     if body.amount <= 0:
         raise HTTPException(400, "amount must be positive")
@@ -591,6 +648,193 @@ def integrity(x_admin_token: str = Header(default=None)):
         "suspicious_users": suspicious,
         "negative_balances": negative,
     }
+
+
+# ---------------- JEU DE HACKER : reconnaissance, fuite, vol plafonné ----------------
+def _cooldown_remaining() -> float:
+    return max(0.0, round(game_state["blocked_until"] - time.time(), 1))
+
+
+def _bucket(v: float) -> str:
+    """Soldes 'approximatifs' (fuite progressive) : fourchette, pas la valeur exacte."""
+    lo = int(v // 100) * 100
+    return f"~{lo}–{lo + 100} €"
+
+
+def _game_public() -> dict:
+    with game_lock:
+        g = dict(game_state)
+    cd = _cooldown_remaining()
+    g["blocked"] = cd > 0
+    g["cooldown_remaining"] = cd
+    g["loot_cap_remaining"] = round(max(0.0, GAME_LOOT_CAP - g["loot"] - g["loot_neutralized"]), 2)
+    g["degraded"] = degraded["on"]
+    return g
+
+
+@app.get("/game/state")
+def game_state_public():
+    """État du jeu lu en direct par la console attaquant (toujours disponible)."""
+    GAME_BLOCKED.set(1 if _cooldown_remaining() > 0 else 0)
+    return _game_public()
+
+
+@app.post("/game/recon")
+def game_recon():
+    """Sonde de reconnaissance : fuite progressive d'infos sur la cible (par
+    conception, pour le jeu). Instrumentée (compteur Prometheus + log) pour que
+    l'IA puisse repérer un motif d'énumération."""
+    if _cooldown_remaining() > 0:
+        raise HTTPException(403, f"attaquant bloqué — cooldown {_cooldown_remaining()}s")
+    GAME_RECON.inc()
+    with Session(engine()) as s:
+        clients = s.execute(
+            select(User.username, Account.balance, Account.savings)
+            .join(Account, Account.user_id == User.id)
+            .where(User.role == "client").order_by(Account.balance.desc())
+        ).all()
+    victim = game_state["victim"]
+    vrow = next((r for r in clients if r.username == victim), (clients[0] if clients else None))
+    with game_lock:
+        game_state["recon_count"] += 1
+        step = game_state["recon_count"]
+        if step == 1:
+            names = ", ".join(r.username for r in clients[:6]) or "aucun"
+            item = f"Annuaire exposé : {len(clients)} comptes clients détectés ({names})."
+        elif step == 2 and vrow is not None:
+            item = f"Cible « {vrow.username} » : solde courant {_bucket(float(vrow.balance))} (approx.)."
+        elif step == 3 and vrow is not None:
+            has = float(vrow.savings) > 0
+            item = (f"Cible « {vrow.username} » possède un LIVRET d'épargne ({_bucket(float(vrow.savings))})."
+                    if has else f"Cible « {vrow.username} » : pas de livret d'épargne détecté.")
+        else:
+            item = "Infos suffisantes — un retrait ciblé et PLAFONNÉ est possible."
+        if item not in game_state["intel"]:
+            game_state["intel"].append(item)
+        game_state["intel"] = game_state["intel"][-8:]
+        count = game_state["recon_count"]
+    print(f"[GAME] recon #{count} victim={victim} -> {item}", flush=True)
+    return {"ok": True, "recon_count": count, "leaked": item,
+            "ready_to_heist": count >= GAME_RECON_FOR_HEIST, **_game_public()}
+
+
+class HeistIn(BaseModel):
+    amount: float | None = None
+    source: str | None = "courant"   # courant | epargne
+
+
+@app.post("/game/heist")
+def game_heist(body: HeistIn):
+    """Vol PLAFONNÉ sur la cible : retrait atomique (FOR UPDATE), jamais négatif,
+    plafonné par coup (GAME_HEIST_MAX) et en cumulé (GAME_LOOT_CAP). Tracé."""
+    if _cooldown_remaining() > 0:
+        raise HTTPException(403, f"attaquant bloqué — cooldown {_cooldown_remaining()}s")
+    with game_lock:
+        if game_state["recon_count"] < GAME_RECON_FOR_HEIST:
+            raise HTTPException(400, f"reconnaissance insuffisante "
+                                     f"({game_state['recon_count']}/{GAME_RECON_FOR_HEIST})")
+        cap_left = GAME_LOOT_CAP - game_state["loot"] - game_state["loot_neutralized"]
+    if cap_left <= 0:
+        raise HTTPException(400, "plafond de butin atteint — trop risqué d'insister")
+    src = (body.source or "courant").lower()
+    want = body.amount if (body.amount and body.amount > 0) else GAME_HEIST_MAX
+    want = min(want, GAME_HEIST_MAX, cap_left)
+    victim = game_state["victim"]
+    with Session(engine()) as s:
+        u = s.scalar(select(User).where(User.username == victim))
+        acc = s.scalar(select(Account).where(Account.user_id == u.id).with_for_update()) if u else None
+        if acc is None:
+            raise HTTPException(404, "cible introuvable")
+        if src == "epargne":
+            avail = float(acc.savings)
+            stolen = round(min(want, avail), 2)
+            if stolen <= 0:
+                raise HTTPException(402, "livret vide — rien à exfiltrer")
+            acc.savings = float(acc.savings) - stolen
+            label = "⚠ EXFILTRATION LIVRET (jeu)"
+        else:
+            avail = float(acc.balance)
+            stolen = round(min(want, avail), 2)
+            if stolen <= 0:
+                raise HTTPException(402, "compte vide — rien à exfiltrer")
+            acc.balance = float(acc.balance) - stolen
+            label = "⚠ EXFILTRATION (jeu)"
+        s.add(Transaction(account_id=acc.id, amount=stolen, type="debit",
+                          recipient=label, status="completed"))
+        s.commit()
+    with game_lock:
+        game_state["loot"] = round(game_state["loot"] + stolen, 2)
+        game_state["heist_count"] += 1
+        loot = game_state["loot"]
+    GAME_HEIST.inc()
+    GAME_HEIST_AMT.inc(stolen)
+    GAME_LOOT.set(loot)
+    print(f"[GAME] HEIST victim={victim} source={src} stolen={stolen} loot={loot}", flush=True)
+    ws_manager.publish({"type": "tx", "from": victim, "to": "⚠ INCONNU", "amount": stolen, "op": "heist"})
+    return {"ok": True, "stolen": stolen, "source": src, "loot": loot, **_game_public()}
+
+
+@app.post("/game/admin/block")
+def game_block(body: dict = Body(...), x_admin_token: str = Header(default=None)):
+    """L'orchestrateur bloque l'attaquant pour `seconds` (cooldown visible côté console)."""
+    if x_admin_token != ADMIN_TOKEN:
+        raise HTTPException(403, "forbidden")
+    seconds = float(body.get("seconds", 120))
+    with game_lock:
+        game_state["blocked_until"] = time.time() + seconds
+        game_state["block_reason"] = str(body.get("reason", "activité anormale détectée par l'IA"))
+    GAME_BLOCKED.set(1)
+    print(f"[GAME] BLOCK {seconds}s — {game_state['block_reason']}", flush=True)
+    return _game_public()
+
+
+@app.post("/game/admin/clawback")
+def game_clawback(x_admin_token: str = Header(default=None)):
+    """Réponse de la défense : restaure le butin à la cible (intégrité / secours sain)
+    -> l'argent volé ne 'gagne' pas si l'IA bascule à temps."""
+    if x_admin_token != ADMIN_TOKEN:
+        raise HTTPException(403, "forbidden")
+    with game_lock:
+        outstanding = game_state["loot"]
+    if outstanding > 0:
+        with Session(engine()) as s:
+            u = s.scalar(select(User).where(User.username == game_state["victim"]))
+            acc = s.scalar(select(Account).where(Account.user_id == u.id).with_for_update()) if u else None
+            if acc is not None:
+                acc.balance = float(acc.balance) + outstanding
+                s.add(Transaction(account_id=acc.id, amount=outstanding, type="credit",
+                                  recipient="✓ RESTAURATION (défense IA)", status="completed"))
+                s.commit()
+    with game_lock:
+        game_state["loot_neutralized"] = round(game_state["loot_neutralized"] + outstanding, 2)
+        game_state["loot"] = 0.0
+    GAME_LOOT.set(0)
+    print(f"[GAME] CLAWBACK restored={outstanding} to {game_state['victim']}", flush=True)
+    return {"restored": outstanding, **_game_public()}
+
+
+@app.post("/game/admin/reset")
+def game_reset(x_admin_token: str = Header(default=None)):
+    """Réinitialise la partie (rejouer la démo)."""
+    if x_admin_token != ADMIN_TOKEN:
+        raise HTTPException(403, "forbidden")
+    with game_lock:
+        game_state.update({"loot": 0.0, "loot_neutralized": 0.0, "recon_count": 0,
+                           "heist_count": 0, "intel": [], "blocked_until": 0.0, "block_reason": ""})
+    GAME_LOOT.set(0)
+    GAME_BLOCKED.set(0)
+    return _game_public()
+
+
+@app.post("/admin/degrade")
+def admin_degrade(body: dict = Body(...), x_admin_token: str = Header(default=None)):
+    """Bascule : met (ou retire) le noeud en mode dégradé (503 métier). N'a d'effet
+    que si GAME_DEGRADE=1 (montage 2 PC avec un vrai secours)."""
+    if x_admin_token != ADMIN_TOKEN:
+        raise HTTPException(403, "forbidden")
+    want = bool(body.get("enabled", False))
+    degraded["on"] = want and GAME_DEGRADE
+    return {"degraded": degraded["on"], "gated_off": want and not GAME_DEGRADE}
 
 
 # ---------------- Réplication / haute disponibilité ----------------

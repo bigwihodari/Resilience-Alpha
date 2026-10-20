@@ -31,9 +31,18 @@ POLL = float(os.environ.get("POLL", "3"))
 CONFIRM = int(os.environ.get("CONFIRM", "2"))   # polls anormaux consécutifs avant d'agir
 CLEAR = int(os.environ.get("CLEAR", "4"))        # polls normaux consécutifs avant de lever le bouclier
 
+# --- Jeu de hacker : détection de compromission (vol/fuite) + réponse IA ---
+GAME_COOLDOWN = float(os.environ.get("GAME_COOLDOWN", "120"))   # blocage attaquant (s)
+GAME_LOOT_ALERT = float(os.environ.get("GAME_LOOT_ALERT", "200"))  # butin cumulé => alerte
+GAME_RECON_RATE_ALERT = float(os.environ.get("GAME_RECON_RATE_ALERT", "0.6"))  # énumération (req/s)
+GAME_HEIST_RATE_ALERT = float(os.environ.get("GAME_HEIST_RATE_ALERT", "0.25"))  # retraits (req/s)
+
 state = {
     "state": "NORMAL", "protection": False, "score": 0.0, "last_canary": None,
     "security_state": "CLEAR", "waf_blocks": 0, "last_integrity": None, "timeline": [],
+    # Compromission (jeu) : blocage attaquant + bascule secours + protection de l'argent.
+    "compromise": "CLEAR", "attacker_blocked": False, "cooldown_remaining": 0.0,
+    "failover": False, "loot": 0.0, "loot_neutralized": 0.0,
 }
 lock = threading.Lock()
 ACTIVEG = Gauge("remediation_active", "1 si bouclier de remediation actif")
@@ -105,6 +114,28 @@ def detector_status():
         return False, 0.0, False
 
 
+def game_status():
+    try:
+        return requests.get(f"{API}/game/state", timeout=4).json()
+    except Exception:
+        return {}
+
+
+def game_admin(path, payload=None):
+    try:
+        r = requests.post(f"{API}{path}", json=(payload or {}),
+                          headers={"X-Admin-Token": ADMIN_TOKEN}, timeout=6)
+        return r.json() if r.status_code == 200 else None
+    except Exception:
+        return None
+
+
+def set_degrade(enabled):
+    """Bascule réseau : met le principal en dégradé 503 (nginx -> secours). N'a
+    d'effet que si l'API tourne avec GAME_DEGRADE=1 (montage 2 PC)."""
+    return game_admin("/admin/degrade", {"enabled": bool(enabled)})
+
+
 def run_canary_record():
     ok, lat, detail = canary()
     with lock:
@@ -116,6 +147,7 @@ def loop():
     anom_streak = 0
     clear_streak = 0
     waf_clear = 0
+    game_clear = 0
     while True:
         is_anom, score, trained = detector_status()
         with lock:
@@ -181,6 +213,62 @@ def loop():
             add_event("Fin des tentatives d'injection — menace contenue", "info")
             with lock:
                 state["security_state"] = "CLEAR"
+
+        # --- Playbook COMPROMISSION-JEU : vol/fuite -> blocage + bascule secours ---
+        g = game_status()
+        loot = float(g.get("loot", 0) or 0)
+        heist_count = int(g.get("heist_count", 0) or 0)
+        recon_rate = prom("sum(rate(game_recon_total[1m]))")
+        heist_rate = prom("sum(rate(game_heist_total[1m]))")
+        with lock:
+            state["loot"] = loot
+            state["loot_neutralized"] = float(g.get("loot_neutralized", 0) or 0)
+            state["attacker_blocked"] = bool(g.get("blocked"))
+            state["cooldown_remaining"] = float(g.get("cooldown_remaining", 0) or 0)
+            comp = state["compromise"]
+
+        # Signaux de compromission : butin trop gros, OU exploitation + anomalie ML
+        # (attaque trop forte), OU énumération/retraits trop rapides (motif suspect).
+        exploiting = heist_count > 0 or loot > 0 or recon_rate > 0
+        trigger = (loot >= GAME_LOOT_ALERT
+                   or (is_anom and exploiting)
+                   or recon_rate > GAME_RECON_RATE_ALERT
+                   or heist_rate > GAME_HEIST_RATE_ALERT)
+
+        if comp == "CLEAR" and trigger:
+            reason = ("butin anormal" if loot >= GAME_LOOT_ALERT else
+                      "attaque trop forte (anomalie ML)" if is_anom else
+                      "motif d'énumération/retraits suspect")
+            add_event(f"COMPROMISSION détectée ({reason}, butin {loot:.0f}€) — réponse IA", "alert")
+            with lock:
+                state["compromise"] = "BLOCKED"
+                state["failover"] = True
+            # 1) Bloquer l'attaquant (cooldown visible côté console)
+            game_admin("/game/admin/block", {"seconds": GAME_COOLDOWN, "reason": reason})
+            add_event(f"Attaquant BLOQUÉ — cooldown {int(GAME_COOLDOWN)}s ; ses attaques sont refusées", "action")
+            # 2) Bascule vers le secours (nginx proxy_next_upstream si GAME_DEGRADE=1)
+            set_degrade(True)
+            add_event("Bascule : le principal (compromis) passe la main au SECOURS", "action")
+            # 3) Protéger l'argent : restaurer le butin (secours sain / intégrité)
+            cb = game_admin("/game/admin/clawback")
+            restored = (cb or {}).get("restored", 0)
+            add_event(f"Butin neutralisé ({restored:.0f}€ restaurés) — l'argent volé ne 'gagne' pas", "success")
+            # 4) Prouver que le service reste utilisable
+            ok, lat, detail = run_canary_record()
+            if ok:
+                add_event(f"Transaction canari RÉUSSIE ({lat} ms) — service protégé", "success")
+            game_clear = 0
+
+        elif comp == "BLOCKED":
+            cd = float(g.get("cooldown_remaining", 0) or 0)
+            calm = (not is_anom and recon_rate < 0.1 and heist_rate < 0.05 and loot < GAME_LOOT_ALERT)
+            game_clear = game_clear + 1 if calm else 0
+            if cd <= 0 and game_clear >= CLEAR:
+                set_degrade(False)
+                with lock:
+                    state["compromise"] = "CLEAR"
+                    state["failover"] = False
+                add_event("Menace levée — retour à la normale, le principal reprend la main", "success")
 
         time.sleep(POLL)
 

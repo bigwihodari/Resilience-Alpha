@@ -127,6 +127,21 @@ export default function Cockpit() {
         </span>
       </div>
 
+      {/* Bannière compromission (jeu) : l'IA a détecté un vol/fuite → bascule secours */}
+      {(rem?.compromise === "BLOCKED" || rem?.failover) && (() => {
+        const cd = Math.max(0, Math.round(rem?.cooldown_remaining || 0));
+        const cdTxt = `${String(Math.floor(cd / 60)).padStart(2, "0")}:${String(cd % 60).padStart(2, "0")}`;
+        return (
+          <div className="rounded-2xl p-4 mb-5 text-center font-bold shadow bg-red-50 text-red-800 border border-red-300 animate-pulse">
+            ⚠ COMPROMISSION DÉTECTÉE → bascule vers le secours
+            <div className="text-sm font-semibold mt-1 text-red-700">
+              Attaquant bloqué{cd > 0 ? ` (cooldown ${cdTxt})` : ""}
+              {rem?.loot_neutralized > 0 ? ` · butin neutralisé ${Math.round(rem.loot_neutralized)}€` : ""}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* État des systèmes */}
       <h2 className="text-sm font-bold uppercase tracking-wide text-accent mb-2">État des systèmes</h2>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
