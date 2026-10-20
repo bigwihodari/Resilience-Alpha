@@ -11,6 +11,7 @@ import {
 } from "../api.js";
 import ChatWidget from "../widgets/ChatWidget.jsx";
 import DinoWidget from "../widgets/DinoWidget.jsx";
+import Casino from "./Casino.jsx";
 
 const euro = (n) => `${Number(n || 0).toLocaleString("fr-FR", { maximumFractionDigits: 2 })} €`;
 
@@ -130,6 +131,7 @@ export default function Dashboard() {
         <TabBtn id="livrets" label="💰 Livrets & Shop" />
         <TabBtn id="marche" label="📬 Marché" badge={unread || null} />
         <TabBtn id="payer" label="💸 Payer" />
+        <TabBtn id="casino" label="🎰 Casino" />
         <TabBtn id="classement" label="🏁 Classement" />
       </div>
 
@@ -276,6 +278,9 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+
+      {/* CASINO */}
+      {tab === "casino" && <Casino onBalance={refresh} />}
 
       {/* CLASSEMENT */}
       {tab === "classement" && (

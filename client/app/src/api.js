@@ -81,6 +81,12 @@ export async function getRoomMessages(id, after = 0) { const r = await jget(`/ap
 export const postRoomMessage = (id, body) => jpost(`/api/chat/rooms/${id}/messages`, { body }, authH());
 // Dino
 export const dinoClaim = (score, multiplier) => jpost("/api/dino/claim", { score, multiplier }, authH());
+// Casino (dés / roulette / blackjack)
+export const casinoDice = (bet, choice) => jpost("/api/casino/dice", { bet, choice }, authH());
+export const casinoRoulette = (bet, choice) => jpost("/api/casino/roulette", { bet, choice }, authH());
+export const bjDeal = (bet) => jpost("/api/casino/blackjack/deal", { bet }, authH());
+export const bjHit = () => jpost("/api/casino/blackjack/hit", {}, authH());
+export const bjStand = () => jpost("/api/casino/blackjack/stand", {}, authH());
 
 // Paiement résilient : même clé d'idempotence sur tous les essais -> si le serveur
 // bascule (principal KO), le ré-essai aboutit sans double débit (exactly-once).

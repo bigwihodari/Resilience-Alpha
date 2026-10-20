@@ -1192,6 +1192,184 @@ def del_favorite(username: str, user: str = Depends(current_user)):
     return {"status": "deleted", "username": username}
 
 
+# ---------------- Casino (mini-jeux : dés, roulette, blackjack) ----------------
+# Serveur autoritaire : RNG côté serveur, mise plafonnée, débit/crédit atomiques.
+CASINO_MAX_BET = float(os.environ.get("CASINO_MAX_BET", "500"))
+bj_games = {}          # username -> partie de blackjack en cours
+bj_lock = threading.Lock()
+
+
+class BetIn(BaseModel):
+    bet: float
+    choice: str | None = None     # dés: high|low|1..6 ; roulette: red|black|<numéro>
+
+
+def _take_bet(s, user, bet):
+    if not bet or bet <= 0:
+        raise HTTPException(400, "mise invalide")
+    if bet > CASINO_MAX_BET:
+        raise HTTPException(400, f"mise maximale {CASINO_MAX_BET:.0f} €")
+    u = s.scalar(select(User).where(User.username == user))
+    acc = s.scalar(select(Account).where(Account.user_id == u.id).with_for_update()) if u else None
+    if acc is None:
+        raise HTTPException(404, "compte introuvable")
+    if float(acc.balance) < bet:
+        raise HTTPException(402, "solde insuffisant")
+    acc.balance = float(acc.balance) - bet
+    return acc
+
+
+def _casino_settle(acc, bet, payout, game):
+    s_add = acc  # account already loaded/locked by caller's session
+    from sqlalchemy.orm import object_session
+    sess = object_session(acc)
+    sess.add(Transaction(account_id=acc.id, amount=bet, type="debit",
+                         recipient=f"CASINO ({game})", status="completed"))
+    if payout > 0:
+        acc.balance = float(acc.balance) + payout
+        sess.add(Transaction(account_id=acc.id, amount=payout, type="credit",
+                             recipient=f"CASINO (gain {game})", status="completed"))
+
+
+@app.post("/casino/dice")
+def casino_dice(body: BetIn, user: str = Depends(current_user)):
+    """Dés : mise sur haut (4-6), bas (1-3) → x2 ; ou un numéro exact → x6."""
+    with Session(engine()) as s:
+        acc = _take_bet(s, user, body.bet)
+        roll = random.randint(1, 6)
+        choice = (body.choice or "high").lower()
+        payout = 0.0
+        if choice in ("high", "haut") and roll >= 4:
+            payout = body.bet * 2
+        elif choice in ("low", "bas") and roll <= 3:
+            payout = body.bet * 2
+        elif choice.isdigit() and 1 <= int(choice) <= 6 and int(choice) == roll:
+            payout = body.bet * 6
+        _casino_settle(acc, body.bet, payout, "dés")
+        s.commit()
+        bal = float(acc.balance)
+    ws_manager.publish({"type": "tx", "from": user, "to": "CASINO", "amount": body.bet, "op": "dice"})
+    return {"roll": roll, "win": payout > 0, "payout": round(payout, 2), "balance": bal}
+
+
+@app.post("/casino/roulette")
+def casino_roulette(body: BetIn, user: str = Depends(current_user)):
+    """Roulette (0-36) : rouge/noir → x2 ; pair/impair → x2 ; un numéro → x36."""
+    REDS = {1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36}
+    with Session(engine()) as s:
+        acc = _take_bet(s, user, body.bet)
+        n = random.randint(0, 36)
+        choice = (body.choice or "red").lower()
+        payout = 0.0
+        if choice in ("red", "rouge") and n in REDS:
+            payout = body.bet * 2
+        elif choice in ("black", "noir") and n != 0 and n not in REDS:
+            payout = body.bet * 2
+        elif choice in ("even", "pair") and n != 0 and n % 2 == 0:
+            payout = body.bet * 2
+        elif choice in ("odd", "impair") and n % 2 == 1:
+            payout = body.bet * 2
+        elif choice.isdigit() and 0 <= int(choice) <= 36 and int(choice) == n:
+            payout = body.bet * 36
+        _casino_settle(acc, body.bet, payout, "roulette")
+        s.commit()
+        bal = float(acc.balance)
+    color = "vert" if n == 0 else ("rouge" if n in REDS else "noir")
+    ws_manager.publish({"type": "tx", "from": user, "to": "CASINO", "amount": body.bet, "op": "roulette"})
+    return {"number": n, "color": color, "win": payout > 0, "payout": round(payout, 2), "balance": bal}
+
+
+def _bj_total(cards):
+    total = sum(cards)
+    aces = cards.count(11)
+    while total > 21 and aces:
+        total -= 10
+        aces -= 1
+    return total
+
+
+def _draw():
+    v = random.randint(1, 13)
+    return 11 if v == 1 else min(10, v)   # as=11 (ajusté par _bj_total), figures=10
+
+
+@app.post("/casino/blackjack/deal")
+def bj_deal(body: BetIn, user: str = Depends(current_user)):
+    """Blackjack : distribue (débite la mise). hit/stand ensuite."""
+    with Session(engine()) as s:
+        acc = _take_bet(s, user, body.bet)
+        s.add(Transaction(account_id=acc.id, amount=body.bet, type="debit",
+                          recipient="CASINO (blackjack)", status="completed"))
+        s.commit()
+        bal = float(acc.balance)
+    player = [_draw(), _draw()]
+    dealer = [_draw()]
+    with bj_lock:
+        bj_games[user] = {"player": player, "dealer": dealer, "bet": body.bet, "over": False}
+    pt = _bj_total(player)
+    if pt == 21:   # blackjack naturel : résolution immédiate
+        return _bj_resolve(user)
+    return {"player": player, "player_total": pt, "dealer": dealer, "dealer_total": _bj_total(dealer),
+            "over": False, "balance": bal}
+
+
+@app.post("/casino/blackjack/hit")
+def bj_hit(user: str = Depends(current_user)):
+    with bj_lock:
+        g = bj_games.get(user)
+        if not g or g["over"]:
+            raise HTTPException(400, "aucune partie en cours")
+        g["player"].append(_draw())
+        pt = _bj_total(g["player"])
+        bust = pt > 21
+    if bust:
+        return _bj_resolve(user)
+    return {"player": g["player"], "player_total": pt, "dealer": g["dealer"],
+            "dealer_total": _bj_total(g["dealer"]), "over": False}
+
+
+@app.post("/casino/blackjack/stand")
+def bj_stand(user: str = Depends(current_user)):
+    return _bj_resolve(user, stand=True)
+
+
+def _bj_resolve(user, stand=False):
+    with bj_lock:
+        g = bj_games.get(user)
+        if not g:
+            raise HTTPException(400, "aucune partie en cours")
+        if stand or _bj_total(g["player"]) >= 21:
+            while _bj_total(g["dealer"]) < 17:
+                g["dealer"].append(_draw())
+        pt, dt = _bj_total(g["player"]), _bj_total(g["dealer"])
+        bet = g["bet"]
+        if pt > 21:
+            result, mult = "perdu", 0.0
+        elif pt == 21 and len(g["player"]) == 2:
+            result, mult = "blackjack", 2.5
+        elif dt > 21 or pt > dt:
+            result, mult = "gagné", 2.0
+        elif pt == dt:
+            result, mult = "égalité", 1.0
+        else:
+            result, mult = "perdu", 0.0
+        g["over"] = True
+        payout = round(bet * mult, 2)
+    bal = None
+    if payout > 0:
+        with Session(engine()) as s:
+            u = s.scalar(select(User).where(User.username == user))
+            acc = s.scalar(select(Account).where(Account.user_id == u.id).with_for_update())
+            acc.balance = float(acc.balance) + payout
+            s.add(Transaction(account_id=acc.id, amount=payout, type="credit",
+                              recipient="CASINO (gain blackjack)", status="completed"))
+            s.commit()
+            bal = float(acc.balance)
+    ws_manager.publish({"type": "tx", "from": user, "to": "CASINO", "amount": 0, "op": "blackjack"})
+    return {"player": g["player"], "player_total": pt, "dealer": g["dealer"], "dealer_total": dt,
+            "over": True, "result": result, "payout": payout, "balance": bal}
+
+
 # ---------------- Interface banquier (rôle 'banker') ----------------
 class BankOp(BaseModel):
     username: str                 # client visé
