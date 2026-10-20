@@ -50,6 +50,8 @@ MERCHANTS = set(m.strip() for m in os.environ.get(
 # Condition de victoire du jeu : premier (client OU attaquant) a atteindre la cible.
 WIN_TARGET = float(os.environ.get("WIN_TARGET", "1000000"))
 game_winner = {"name": None, "camp": None, "networth": 0.0, "at": None}
+# Compte "banque" (coffre) : cible de hack haut-risque, exclu du jeu/leaderboard.
+BANK_USER = os.environ.get("BANK_USER", "trafficbot")
 FAIL_PROMOTE = int(os.environ.get("FAIL_PROMOTE", "3"))       # échecs avant promotion du secours
 FAILBACK_CONFIRM = int(os.environ.get("FAILBACK_CONFIRM", "3"))  # cycles OK avant retour au principal
 repl_state = {"role": ROLE, "name": HA_NAME, "promoted": ROLE == "primary", "peer": PEER_API_URL,
@@ -308,6 +310,16 @@ def startup():
                        "name VARCHAR(40) NOT NULL DEFAULT 'Livret', balance NUMERIC(14,2) NOT NULL DEFAULT 0, "
                        "rate NUMERIC(6,4) NOT NULL DEFAULT 0, level INTEGER NOT NULL DEFAULT 1, "
                        "created_at TIMESTAMPTZ NOT NULL DEFAULT now())"))
+    # Compte BANQUE : le bot de trafic (trafficbot) est le coffre de la banque, pas un
+    # joueur. On lui met le rôle 'bank' -> exclu du leaderboard/victoire/annuaire, mais
+    # il reste une cible de hack très lucrative et très sécurisée (P3.5).
+    if ROLE == "primary":
+        try:
+            with engine().begin() as c:
+                c.execute(text("UPDATE users SET role='bank' WHERE username=:u AND role='client'"),
+                          {"u": BANK_USER})
+        except Exception:  # noqa: BLE001
+            pass
     # Livret initial pour la cible du jeu (fuite « présence d'un livret » + vol épargne).
     if ROLE == "primary" and GAME_SEED_SAVINGS > 0:
         try:

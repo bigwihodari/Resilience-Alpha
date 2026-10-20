@@ -12,6 +12,13 @@ Backup conservé (techno gardée) mais mis de côté du game-loop.
       capacité/sécurité ; refonte dashboard client.
 - [ ] **P2 — Mailbox / enchères / quiz** : boîte mail, enchères officielles (banque),
       quiz banquier (1re bonne réponse créditée) + managers côté banque.
+- [ ] **P2.5 — Chat** : chat global + **chats privés** (créer un salon, ajouter les
+      personnes voulues) en temps réel (WebSocket) pour tout le monde (clients,
+      attaquants, banquier). Tables `chat_rooms` / `chat_members` / `chat_messages`.
+- [ ] **P2.6 — Banquier insider (vend de l'info)** : le banquier peut **vendre de
+      l'intel** (recon sur un client : solde, présence de livret…) à un attaquant
+      contre un **prix** ; l'attaquant paie (butin) et reçoit l'info → hack facilité.
+      (relie banquier P2 + attaquant P3/P3.5 ; traçable, l'IA peut le flaguer).
 - [ ] **P3 — Attaquant v2** : boîte à outils de requêtes (recon/vol), cibles clients &
       attaquants (PvP), scoreboard butin (déjà v1), bibliothèque/doc.
 - [ ] **P3.5 — Éco du vol (risque/récompense)** :
