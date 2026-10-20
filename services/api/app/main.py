@@ -225,6 +225,59 @@ class Transaction(Base):
     )
 
 
+class Mail(Base):
+    """Boîte mail in-app (annonces banque, lots, enchères, phishing plus tard)."""
+    __tablename__ = "mail"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    subject: Mapped[str] = mapped_column(String(140))
+    body: Mapped[str] = mapped_column(String(2000), default="")
+    kind: Mapped[str] = mapped_column(String(16), default="info")  # info|auction|quiz|prize|phishing
+    is_read: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now())
+
+
+class Auction(Base):
+    """Enchère officielle créée par le banquier. À la clôture, le plus offrant est
+    débité de sa mise et crédité de la VALEUR de l'objet (gain net = valeur - mise)."""
+    __tablename__ = "auctions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    title: Mapped[str] = mapped_column(String(140))
+    item_value: Mapped[float] = mapped_column(Numeric(14, 2))
+    min_bid: Mapped[float] = mapped_column(Numeric(14, 2), default=0)
+    status: Mapped[str] = mapped_column(String(12), default="open")  # open|closed
+    created_by: Mapped[str] = mapped_column(String(64))
+    winner: Mapped[str] = mapped_column(String(64), nullable=True)
+    winning_bid: Mapped[float] = mapped_column(Numeric(14, 2), nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now())
+
+
+class Bid(Base):
+    __tablename__ = "bids"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    auction_id: Mapped[int] = mapped_column(ForeignKey("auctions.id", ondelete="CASCADE"))
+    username: Mapped[str] = mapped_column(String(64))
+    amount: Mapped[float] = mapped_column(Numeric(14, 2))
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now())
+
+
+class Quiz(Base):
+    """Quiz du banquier : 1re bonne réponse gagne le lot (crédité, banquier-funded)."""
+    __tablename__ = "quizzes"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    question: Mapped[str] = mapped_column(String(500))
+    answer: Mapped[str] = mapped_column(String(140))
+    prize: Mapped[float] = mapped_column(Numeric(14, 2))
+    status: Mapped[str] = mapped_column(String(12), default="open")  # open|closed
+    winner: Mapped[str] = mapped_column(String(64), nullable=True)
+    created_by: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now())
+
+
 _engine = None
 
 
@@ -350,6 +403,26 @@ def startup():
                        "id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, "
                        "ukey VARCHAR(32) NOT NULL, level INTEGER NOT NULL DEFAULT 0, "
                        "UNIQUE(user_id, ukey))"))
+        # P2 — boîte mail / enchères / quiz
+        c.execute(text("CREATE TABLE IF NOT EXISTS mail ("
+                       "id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, "
+                       "subject VARCHAR(140) NOT NULL, body VARCHAR(2000) NOT NULL DEFAULT '', "
+                       "kind VARCHAR(16) NOT NULL DEFAULT 'info', is_read INTEGER NOT NULL DEFAULT 0, "
+                       "created_at TIMESTAMPTZ NOT NULL DEFAULT now())"))
+        c.execute(text("CREATE TABLE IF NOT EXISTS auctions ("
+                       "id SERIAL PRIMARY KEY, title VARCHAR(140) NOT NULL, item_value NUMERIC(14,2) NOT NULL, "
+                       "min_bid NUMERIC(14,2) NOT NULL DEFAULT 0, status VARCHAR(12) NOT NULL DEFAULT 'open', "
+                       "created_by VARCHAR(64) NOT NULL, winner VARCHAR(64), winning_bid NUMERIC(14,2), "
+                       "created_at TIMESTAMPTZ NOT NULL DEFAULT now())"))
+        c.execute(text("CREATE TABLE IF NOT EXISTS bids ("
+                       "id SERIAL PRIMARY KEY, auction_id INTEGER NOT NULL REFERENCES auctions(id) ON DELETE CASCADE, "
+                       "username VARCHAR(64) NOT NULL, amount NUMERIC(14,2) NOT NULL, "
+                       "created_at TIMESTAMPTZ NOT NULL DEFAULT now())"))
+        c.execute(text("CREATE TABLE IF NOT EXISTS quizzes ("
+                       "id SERIAL PRIMARY KEY, question VARCHAR(500) NOT NULL, answer VARCHAR(140) NOT NULL, "
+                       "prize NUMERIC(14,2) NOT NULL, status VARCHAR(12) NOT NULL DEFAULT 'open', "
+                       "winner VARCHAR(64), created_by VARCHAR(64) NOT NULL, "
+                       "created_at TIMESTAMPTZ NOT NULL DEFAULT now())"))
     # Compte BANQUE : le bot de trafic (trafficbot) est le coffre de la banque, pas un
     # joueur. On lui met le rôle 'bank' -> exclu du leaderboard/victoire/annuaire, mais
     # il reste une cible de hack très lucrative et très sécurisée (P3.5).
@@ -965,6 +1038,255 @@ def bank_set_savings_config(body: SavingsCfgIn, banker: str = Depends(require_ba
     ws_manager.publish({"type": "tx", "from": "LIVRET", "to": "", "amount": 0, "op": "config"})
     return {"rate": savings_cfg["rate"], "interval": savings_cfg["interval"],
             "rate_pct": round(savings_cfg["rate"] * 100, 3)}
+
+
+# ---------------- P2 : boîte mail / enchères / quiz ----------------
+def _mail_clients(s, subject, body, kind="info"):
+    """Insère un mail pour TOUS les clients (annonce banque). À appeler dans une
+    session ouverte, avant commit."""
+    for uid in s.scalars(select(User.id).where(User.role == "client")).all():
+        s.add(Mail(user_id=uid, subject=subject[:140], body=body[:2000], kind=kind))
+
+
+@app.get("/mail")
+def list_mail(user: str = Depends(current_user)):
+    """Boîte mail du joueur (annonces, lots gagnés…)."""
+    with Session(engine()) as s:
+        u = _user_or_404(s, user)
+        rows = s.scalars(select(Mail).where(Mail.user_id == u.id)
+                         .order_by(Mail.id.desc()).limit(50)).all()
+        unread = int(s.scalar(select(func.count()).select_from(Mail)
+                              .where(Mail.user_id == u.id, Mail.is_read == 0)) or 0)
+    return {"unread": unread, "mail": [
+        {"id": m.id, "subject": m.subject, "body": m.body, "kind": m.kind,
+         "read": bool(m.is_read),
+         "created_at": m.created_at.isoformat() if m.created_at else None} for m in rows]}
+
+
+@app.post("/mail/{mail_id}/read")
+def read_mail(mail_id: int, user: str = Depends(current_user)):
+    with Session(engine()) as s:
+        u = _user_or_404(s, user)
+        m = s.scalar(select(Mail).where(Mail.id == mail_id, Mail.user_id == u.id))
+        if m is None:
+            raise HTTPException(404, "message introuvable")
+        m.is_read = 1
+        s.commit()
+    return {"ok": True, "id": mail_id}
+
+
+class AuctionIn(BaseModel):
+    title: str
+    item_value: float
+    min_bid: float | None = 0
+
+
+class BidIn(BaseModel):
+    amount: float
+
+
+@app.post("/bank/auctions")
+def bank_create_auction(body: AuctionIn, banker: str = Depends(require_banker)):
+    if body.item_value <= 0:
+        raise HTTPException(400, "valeur de l'objet invalide")
+    with Session(engine()) as s:
+        a = Auction(title=(body.title or "Objet").strip()[:140], item_value=round(float(body.item_value), 2),
+                    min_bid=round(max(0.0, float(body.min_bid or 0)), 2), status="open", created_by=banker)
+        s.add(a)
+        s.flush()
+        _mail_clients(s, f"Nouvelle enchère : {a.title}",
+                      f"La banque met en vente « {a.title} » (valeur estimée {float(a.item_value):.0f} €). "
+                      f"Mise minimale {float(a.min_bid):.0f} €. Enchérissez depuis l'onglet Enchères !", "auction")
+        aid = a.id
+        s.commit()
+    ws_manager.publish({"type": "auction", "op": "open", "id": aid})
+    ws_manager.publish({"type": "mail"})
+    return {"id": aid, "status": "open"}
+
+
+@app.get("/auctions")
+def list_auctions(user: str = Depends(current_user)):
+    """Enchères visibles par les joueurs (plus haute mise + ma mise, pas les noms)."""
+    with Session(engine()) as s:
+        auctions = s.scalars(select(Auction).order_by(Auction.id.desc()).limit(30)).all()
+        out = []
+        for a in auctions:
+            top = s.execute(select(func.max(Bid.amount)).where(Bid.auction_id == a.id)).scalar()
+            mine = s.execute(select(func.max(Bid.amount)).where(
+                Bid.auction_id == a.id, Bid.username == user)).scalar()
+            out.append({"id": a.id, "title": a.title, "item_value": float(a.item_value),
+                        "min_bid": float(a.min_bid), "status": a.status,
+                        "highest_bid": float(top) if top is not None else None,
+                        "my_bid": float(mine) if mine is not None else None,
+                        "winner": a.winner,
+                        "winning_bid": float(a.winning_bid) if a.winning_bid is not None else None})
+    return {"auctions": out}
+
+
+@app.post("/auctions/{auction_id}/bid")
+def place_bid(auction_id: int, body: BidIn, user: str = Depends(current_user)):
+    amt = round(float(body.amount), 2)
+    if amt <= 0:
+        raise HTTPException(400, "mise invalide")
+    with Session(engine()) as s:
+        u = _user_or_404(s, user)
+        if (u.role or "client") != "client":
+            raise HTTPException(403, "seuls les clients peuvent enchérir")
+        a = s.scalar(select(Auction).where(Auction.id == auction_id))
+        if a is None or a.status != "open":
+            raise HTTPException(404, "enchère close ou introuvable")
+        acc = s.scalar(select(Account).where(Account.user_id == u.id))
+        if acc is None or float(acc.balance) < amt:
+            raise HTTPException(402, "solde insuffisant pour couvrir la mise")
+        top = s.execute(select(func.max(Bid.amount)).where(Bid.auction_id == a.id)).scalar()
+        floor = max(float(a.min_bid), float(top) if top is not None else 0.0)
+        if amt <= floor:
+            raise HTTPException(400, f"la mise doit dépasser {floor:.0f} €")
+        s.add(Bid(auction_id=a.id, username=user, amount=amt))
+        s.commit()
+    ws_manager.publish({"type": "auction", "op": "bid", "id": auction_id, "amount": amt})
+    return {"ok": True, "auction_id": auction_id, "amount": amt}
+
+
+@app.post("/bank/auctions/{auction_id}/close")
+def bank_close_auction(auction_id: int, banker: str = Depends(require_banker)):
+    """Clôture : le plus offrant SOLVABLE est débité de sa mise et crédité de la
+    valeur de l'objet (gain net = valeur - mise). Mail au gagnant."""
+    winner = None
+    winning_bid = None
+    with Session(engine()) as s:
+        a = s.scalar(select(Auction).where(Auction.id == auction_id).with_for_update())
+        if a is None:
+            raise HTTPException(404, "enchère introuvable")
+        if a.status == "closed":
+            raise HTTPException(400, "enchère déjà close")
+        bids = s.scalars(select(Bid).where(Bid.auction_id == a.id)
+                         .order_by(Bid.amount.desc(), Bid.id.asc())).all()
+        val = float(a.item_value)
+        for b in bids:
+            wu = s.scalar(select(User).where(User.username == b.username))
+            if wu is None or (wu.role or "client") != "client":
+                continue
+            wacc = s.scalar(select(Account).where(Account.user_id == wu.id).with_for_update())
+            bid_amt = float(b.amount)
+            if wacc is None or float(wacc.balance) < bid_amt:
+                continue  # ne peut plus payer sa mise -> offrant suivant
+            wacc.balance = float(wacc.balance) - bid_amt + val
+            s.add(Transaction(account_id=wacc.id, amount=bid_amt, type="debit",
+                              recipient=f"ENCHÈRE « {a.title} » (mise)", status="completed"))
+            s.add(Transaction(account_id=wacc.id, amount=val, type="credit",
+                              recipient=f"ENCHÈRE « {a.title} » (objet)", status="completed"))
+            net = round(val - bid_amt, 2)
+            s.add(Mail(user_id=wu.id, subject=f"Enchère remportée : {a.title}",
+                       body=f"Félicitations ! Vous remportez « {a.title} » pour une mise de {bid_amt:.0f} €. "
+                            f"Objet crédité {val:.0f} € — gain net {net:+.0f} €.", kind="prize"))
+            winner = b.username
+            winning_bid = bid_amt
+            break
+        a.status = "closed"
+        a.winner = winner
+        a.winning_bid = winning_bid
+        s.commit()
+    ws_manager.publish({"type": "auction", "op": "close", "id": auction_id, "winner": winner})
+    ws_manager.publish({"type": "mail"})
+    _check_win()
+    return {"ok": True, "winner": winner, "winning_bid": winning_bid}
+
+
+@app.get("/bank/auctions")
+def bank_list_auctions(banker: str = Depends(require_banker)):
+    """Vue banquier : enchères + mises (noms visibles)."""
+    with Session(engine()) as s:
+        auctions = s.scalars(select(Auction).order_by(Auction.id.desc()).limit(30)).all()
+        out = []
+        for a in auctions:
+            bids = s.scalars(select(Bid).where(Bid.auction_id == a.id)
+                             .order_by(Bid.amount.desc()).limit(10)).all()
+            out.append({"id": a.id, "title": a.title, "item_value": float(a.item_value),
+                        "min_bid": float(a.min_bid), "status": a.status, "winner": a.winner,
+                        "winning_bid": float(a.winning_bid) if a.winning_bid is not None else None,
+                        "bids": [{"username": b.username, "amount": float(b.amount)} for b in bids]})
+    return {"auctions": out}
+
+
+class QuizIn(BaseModel):
+    question: str
+    answer: str
+    prize: float
+
+
+class AnswerIn(BaseModel):
+    answer: str
+
+
+@app.post("/bank/quizzes")
+def bank_create_quiz(body: QuizIn, banker: str = Depends(require_banker)):
+    if body.prize <= 0:
+        raise HTTPException(400, "lot invalide")
+    if not (body.answer or "").strip():
+        raise HTTPException(400, "réponse vide")
+    with Session(engine()) as s:
+        q = Quiz(question=(body.question or "").strip()[:500], answer=body.answer.strip()[:140],
+                 prize=round(float(body.prize), 2), status="open", created_by=banker)
+        s.add(q)
+        s.flush()
+        _mail_clients(s, "Quiz de la banque !",
+                      f"Question : {q.question}\nLot : {float(q.prize):.0f} € pour la 1re bonne réponse. "
+                      f"Répondez vite depuis l'onglet Quiz !", "quiz")
+        qid = q.id
+        s.commit()
+    ws_manager.publish({"type": "quiz", "op": "open", "id": qid})
+    ws_manager.publish({"type": "mail"})
+    return {"id": qid, "status": "open"}
+
+
+@app.get("/quizzes")
+def list_quizzes(user: str = Depends(current_user)):
+    """Quiz visibles par les joueurs (sans la réponse)."""
+    with Session(engine()) as s:
+        rows = s.scalars(select(Quiz).order_by(Quiz.id.desc()).limit(20)).all()
+    return {"quizzes": [{"id": q.id, "question": q.question, "prize": float(q.prize),
+                         "status": q.status, "winner": q.winner} for q in rows]}
+
+
+@app.post("/quizzes/{quiz_id}/answer")
+def answer_quiz(quiz_id: int, body: AnswerIn, user: str = Depends(current_user)):
+    """1re bonne réponse : lot crédité (banquier-funded), quiz fermé."""
+    guess = (body.answer or "").strip().lower()
+    with Session(engine()) as s:
+        u = _user_or_404(s, user)
+        if (u.role or "client") != "client":
+            raise HTTPException(403, "seuls les clients peuvent répondre")
+        q = s.scalar(select(Quiz).where(Quiz.id == quiz_id).with_for_update())
+        if q is None or q.status != "open":
+            raise HTTPException(404, "quiz clos ou introuvable")
+        if guess != (q.answer or "").strip().lower():
+            return {"ok": False, "correct": False}
+        acc = s.scalar(select(Account).where(Account.user_id == u.id).with_for_update())
+        prize = float(q.prize)
+        acc.balance = float(acc.balance) + prize
+        s.add(Transaction(account_id=acc.id, amount=prize, type="credit",
+                          recipient="QUIZ (lot)", status="completed"))
+        q.status = "closed"
+        q.winner = user
+        s.add(Mail(user_id=u.id, subject="Quiz gagné !",
+                   body=f"Bonne réponse ! Vous gagnez {prize:.0f} €.", kind="prize"))
+        s.commit()
+        new_balance = float(acc.balance)
+    ws_manager.publish({"type": "quiz", "op": "win", "id": quiz_id, "winner": user})
+    ws_manager.publish({"type": "tx", "from": "QUIZ", "to": user, "amount": prize})
+    ws_manager.publish({"type": "mail"})
+    _check_win()
+    return {"ok": True, "correct": True, "prize": prize, "balance": new_balance}
+
+
+@app.get("/bank/quizzes")
+def bank_list_quizzes(banker: str = Depends(require_banker)):
+    """Vue banquier : quiz avec la réponse."""
+    with Session(engine()) as s:
+        rows = s.scalars(select(Quiz).order_by(Quiz.id.desc()).limit(20)).all()
+    return {"quizzes": [{"id": q.id, "question": q.question, "answer": q.answer,
+                         "prize": float(q.prize), "status": q.status, "winner": q.winner} for q in rows]}
 
 
 @app.get("/admin/integrity")

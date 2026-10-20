@@ -46,6 +46,51 @@ CREATE TABLE IF NOT EXISTS favorites (
     UNIQUE (user_id, fav_username)
 );
 
+-- P2 — boite mail in-app (annonces banque, lots, enchAres).
+CREATE TABLE IF NOT EXISTS mail (
+    id         SERIAL PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    subject    VARCHAR(140) NOT NULL,
+    body       VARCHAR(2000) NOT NULL DEFAULT '',
+    kind       VARCHAR(16) NOT NULL DEFAULT 'info',   -- info|auction|quiz|prize|phishing
+    is_read    INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- P2 — encheres officielles (banque). A la cloture : plus offrant debite de sa
+-- mise et credite de la VALEUR de l'objet (gain net = valeur - mise).
+CREATE TABLE IF NOT EXISTS auctions (
+    id          SERIAL PRIMARY KEY,
+    title       VARCHAR(140) NOT NULL,
+    item_value  NUMERIC(14,2) NOT NULL,
+    min_bid     NUMERIC(14,2) NOT NULL DEFAULT 0,
+    status      VARCHAR(12) NOT NULL DEFAULT 'open',   -- open|closed
+    created_by  VARCHAR(64) NOT NULL,
+    winner      VARCHAR(64),
+    winning_bid NUMERIC(14,2),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS bids (
+    id         SERIAL PRIMARY KEY,
+    auction_id INTEGER NOT NULL REFERENCES auctions(id) ON DELETE CASCADE,
+    username   VARCHAR(64) NOT NULL,
+    amount     NUMERIC(14,2) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- P2 — quiz du banquier : 1re bonne reponse gagne le lot (credite, banquier-funded).
+CREATE TABLE IF NOT EXISTS quizzes (
+    id         SERIAL PRIMARY KEY,
+    question   VARCHAR(500) NOT NULL,
+    answer     VARCHAR(140) NOT NULL,
+    prize      NUMERIC(14,2) NOT NULL,
+    status     VARCHAR(12) NOT NULL DEFAULT 'open',   -- open|closed
+    winner     VARCHAR(64),
+    created_by VARCHAR(64) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS transactions (
     id         SERIAL PRIMARY KEY,
     account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,

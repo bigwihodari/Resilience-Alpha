@@ -19,6 +19,11 @@ Backup conservé (techno gardée) mais mis de côté du game-loop.
       l'intel** (recon sur un client : solde, présence de livret…) à un attaquant
       contre un **prix** ; l'attaquant paie (butin) et reçoit l'info → hack facilité.
       (relie banquier P2 + attaquant P3/P3.5 ; traçable, l'IA peut le flaguer).
+- [ ] **P2.7 — Mini-jeu Dino** : jeu type dino Chrome côté client ; récolte de pièces
+      → argent crédité au compte (serveur valide, anti-triche, plafonds) ; **bonus
+      x5/x10/x100** pendant la run. **Hack attaquant** : analyser une session de jeu
+      active et détourner le compte destinataire du gain (requête complexe), protégé
+      par l'IA (difficile, suspicion).
 - [ ] **P3 — Attaquant v2** : boîte à outils de requêtes (recon/vol), cibles clients &
       attaquants (PvP), scoreboard butin (déjà v1), bibliothèque/doc.
 - [ ] **P3.5 — Éco du vol (risque/récompense)** :
