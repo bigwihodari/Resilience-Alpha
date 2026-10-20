@@ -64,6 +64,7 @@
     <a href="#client">⑤ Clients <span>app de paiement</span></a>
     <a href="#att">⑥ Attaquant <span>7 vecteurs, multi-attaque</span></a>
     <a href="#ordre">⑦ Ordre & dépannage</a>
+    <a href="#jeu">⑧ Mode jeu <span>idle éco vs cyber</span></a>
   </div>
 
   <!-- 0 -->
@@ -217,6 +218,30 @@ TARGET_HOST=192.168.137.1</pre></div></div>
     <tr><td>Repartir de zéro</td><td><code>docker compose down -v</code> puis <code>.\start.ps1</code>.</td></tr>
     <tr><td>Assistant IA muet</td><td>Ollama doit tourner sur le PC Hôte avec <code>qwen2.5:7b-instruct-q4_K_M</code> (<code>ollama pull qwen2.5:7b-instruct-q4_K_M</code> + <code>ollama pull nomic-embed-text</code>).</td></tr>
   </table>
+
+  <!-- mode jeu -->
+  <h2 id="jeu"><span class="n">8</span>🎮 Mode jeu (idle « éco vs cyber »)</h2>
+  <div class="card">
+    <p>Par-dessus la démo de paiement, l'app est un <b>jeu idle multijoueur</b> : premier à
+    <b>1 000 000 €</b> gagne (joueur OU attaquant). Rien à installer de plus — mêmes serveurs.</p>
+    <h3>🎮 Joueur (app client, <span class="url">:8095</span>)</h3>
+    <ul>
+      <li><b>Fortune &amp; course au million</b> : barre de progression + classement live.</li>
+      <li><b>Livrets &amp; Shop</b> : plusieurs livrets qui produisent des intérêts (idle), boutique à <b>coûts exponentiels</b> (nouveaux livrets, multiplicateur, coffre-fort).</li>
+      <li><b>Marché</b> : boîte mail, <b>enchères</b> (le plus offrant gagne la valeur de l'objet), <b>quiz</b> du banquier.</li>
+      <li><b>Chat</b> (global + salons privés) et <b>mini-jeu Dino</b> (ramasse des pièces, bonus x5/x10/x100 → argent).</li>
+    </ul>
+    <h3>🏦 Banquier (host, onglet <b>Jeu</b> — <code>banquier / password123</code>)</h3>
+    <p>Lance des enchères et des quiz, et <b>vend de l'info</b> aux attaquants (insider). Règle aussi le taux du livret (onglet Banque).</p>
+    <h3>⚔️ Attaquant (console <span class="url">:8090</span>)</h3>
+    <ul>
+      <li><b>Reconnaissance → vol plafonné</b> sur les clients, la <b>banque</b> (gros risque) ou d'<b>autres attaquants</b> (PvP).</li>
+      <li><b>Shop furtivité</b> (payé au butin), <b>achat d'info</b> au banquier, <b>campagnes de phishing</b> (fausses enchères).</li>
+      <li><b>Jauge de suspicion</b> : plus tu attaques fort, plus l'IA risque de te <b>bloquer</b> (cooldown) — joue discret.</li>
+    </ul>
+    <div class="ok">🛡️ Côté défense : le <b>Cockpit</b> montre la détection IA, la <b>suspicion par IP</b>, la remédiation et la <b>bascule sur le secours</b> si le principal est compromis (le butin volé est neutralisé si l'IA bascule à temps).</div>
+    <p class="c">Détail des techniques d'attaque : <a class="url" href="http://localhost:8090/guide" target="_blank" rel="noreferrer">GUIDE-ATTAQUANT</a> (servi par la console attaquant).</p>
+  </div>
 
   <footer>
     Projet pédagogique — données et attaques fictives, limitées à votre labo.
