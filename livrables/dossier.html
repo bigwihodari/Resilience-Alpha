@@ -89,12 +89,13 @@
   <h2>2. Architecture &amp; flux</h2>
   <p>Deux postes sur le réseau Wi-Fi du groupe (<code>RESILIENCE-G&lt;n&gt;</code>, 192.168.137.x) :
   le <b>PC Hôte</b> exécute la plateforme, le <b>PC Attaquant</b> lance les attaques depuis une
-  application dédiée.</p>
+  application dédiée proposant <b>7 vecteurs</b> (DoS auth, injection SQL, flood API, XSS,
+  bourrage d'identifiants, flood de 404, slowloris), activables <b>simultanément</b>.</p>
   <h3>Composants (conteneurs Docker Compose)</h3>
   <table>
     <tr><th>Service</th><th>Rôle</th><th>Technologie</th></tr>
-    <tr><td>frontend</td><td>App unique de l'hôte : paiement + cockpit (reverse-proxy)</td><td>React + Tailwind, nginx</td></tr>
-    <tr><td>api</td><td>Transactions fictives, /metrics, WAF applicatif</td><td>FastAPI</td></tr>
+    <tr><td>frontend</td><td>App unique de l'hôte : paiement + cockpit + pages Banque &amp; Haute-Dispo (reverse-proxy)</td><td>React + Tailwind, nginx</td></tr>
+    <tr><td>api</td><td>Transactions fictives, /metrics, WAF applicatif, interface banquier (/bank/*), agrégation HA (/ha/cluster)</td><td>FastAPI</td></tr>
     <tr><td>auth</td><td>Authentification JWT, bouclier anti-DoS, WAF</td><td>FastAPI</td></tr>
     <tr><td>db</td><td>Comptes &amp; transactions (non exposée)</td><td>PostgreSQL</td></tr>
     <tr><td>detector</td><td>Détection d'anomalies ML (score)</td><td>scikit-learn</td></tr>
@@ -102,7 +103,7 @@
     <tr><td>prometheus / grafana / loki / promtail / cadvisor</td><td>Observabilité (métriques, logs, CPU/mém)</td><td>Stack Grafana</td></tr>
     <tr><td>traffic-gen</td><td>Trafic légitime (baseline du modèle)</td><td>Python</td></tr>
     <tr><td>assistant</td><td>Assistant RAG opérateur (lecture doc, sans privilège)</td><td>Ollama + LangChain</td></tr>
-    <tr><td>attacker (poste distinct)</td><td>Console d'attaque tout-en-un (DoS, SQLi)</td><td>FastAPI + Chart.js</td></tr>
+    <tr><td>attacker (poste distinct)</td><td>Console d'attaque multi-vecteurs : 7 vecteurs lançables simultanément (« tout lancer »)</td><td>FastAPI + Chart.js</td></tr>
   </table>
   <h3>Flux de résilience</h3>
   <p><code>trafic + attaque → métriques Prometheus + logs Loki → détecteur ML (score) →
@@ -111,7 +112,16 @@
   <p>Deux serveurs (<b>principal + secours</b>), deux clients, un attaquant. L'application
   <b>client est séparée du serveur</b> : les clients se paient en direct (transfert entre
   comptes + annuaire de recherche), le serveur gère transactions, connexions et supervision
-  (cockpit). Le backup <b>réplique</b> le principal (comptes + clés d'idempotence).</p>
+  (cockpit). Le backup <b>réplique</b> le principal (comptes + clés d'idempotence). Deux
+  mécanismes assurent la continuité : <b>bascule automatique</b> (failover) si le principal
+  tombe, puis <b>retour automatique</b> (failback) avec réconciliation dès qu'il se répare.</p>
+  <h3>Pages de supervision de l'app hôte</h3>
+  <p>Outre le cockpit, l'app hôte expose deux vues dédiées. <b>Banque</b> (réservée au rôle
+  <i>banquier</i>) : tous les comptes clients et leurs soldes, masse monétaire totale,
+  crédit/débit de n'importe quel compte et historique des mouvements par client, le tout mis
+  à jour <b>en temps réel par WebSocket</b>. <b>Haute-Dispo</b> : visuel live des nœuds
+  PRINCIPAL / SECOURS, nœud servant le trafic, raisonnement du système IA et journal horodaté
+  des bascules (endpoint d'agrégation <code>/ha/cluster</code>).</p>
 </section>
 
 <!-- 3. DÉTECTION ML -->
@@ -160,13 +170,18 @@
   <p>L'orchestrateur n'a <b>pas</b> d'accès god-mode aux conteneurs : il agit via une API
   d'administration <b>scoped</b> (activer le bouclier, contrôler l'intégrité), protégée par un
   token dédié — un point d'attention explicite du cahier des charges.</p>
-  <h3>Haute disponibilité : bascule &amp; reprise de transaction</h3>
-  <p>Si le serveur principal tombe, l'application client <b>bascule automatiquement</b> sur le
-  serveur de secours (upstream nginx). Chaque paiement porte une <b>clé d'idempotence</b> :
-  une transaction en cours est <b>reprise exactement une fois</b> sur le backup, sans double
-  débit. Le backup se <b>promeut</b> autoritaire après quelques secondes d'absence du principal
-  (évite l'écrasement de ses propres écritures à son retour). Deux niveaux combinés :
-  auto-réparation (remédiation) si le principal peut se soigner, bascule si l'hôte crashe.</p>
+  <h3>Haute disponibilité : bascule (failover) &amp; retour (failback)</h3>
+  <p><b>Bascule automatique.</b> Si le principal devient injoignable (3 échecs de réplication
+  consécutifs, intervalle 2 s), le secours est <b>promu automatiquement</b> et sert le trafic ;
+  les clients basculent via nginx (upstream failover). Chaque paiement porte une <b>clé
+  d'idempotence</b> : une transaction en cours est <b>reprise exactement une fois</b> sur le
+  secours, sans double débit. Le cockpit de l'hôte reste lui-même vivant pendant la panne
+  (son nginx bascule aussi vers le secours).</p>
+  <p><b>Retour automatique.</b> Dès que le principal se répare, le secours lui <b>rejoue son
+  état</b> (réconciliation — aucune transaction perdue), puis repasse en mode réplication :
+  le principal reprend la main. Deux niveaux combinés : auto-réparation (remédiation) si le
+  principal peut se soigner, bascule si l'hôte crashe — c'est précisément ce que l'attaquant
+  provoque en lançant ses 7 vecteurs d'un coup pour faire tomber le principal.</p>
 </section>
 
 <!-- 5. SÉCURITÉ -->
@@ -179,6 +194,8 @@
     <tr><td>Moindre privilège</td><td>Orchestrateur via API admin scoped ; clients internes via token dédié</td></tr>
     <tr><td>Durcissement</td><td><code>no-new-privileges</code> sur les services ; DB non exposée ; cAdvisor sans port</td></tr>
     <tr><td>Secrets</td><td>Chiffrés via SOPS + age ; aucun secret en clair dans le dépôt</td></tr>
+    <tr><td>Contrôle d'accès par rôle (banquier)</td><td>Rôle <code>banker</code> porté par le JWT ; endpoints <code>/bank/*</code> protégés (un client normal reçoit <b>403</b>, vérifié) ; le banquier est exclu de l'annuaire des clients</td></tr>
+    <tr><td>Continuité de service (haute dispo)</td><td>Failover automatique vers le secours + clés d'idempotence (reprise <i>exactly-once</i>) ; failback avec réconciliation → aucune transaction perdue</td></tr>
   </table>
   <p class="muted">Détail : voir <code>SECURITE.md</code> dans le dépôt.</p>
 </section>
@@ -204,6 +221,12 @@
   <p>Recette haute disponibilité (<code>scripts/recette-ha.sh</code>) : crash du serveur
   principal → bascule automatique du client sur le backup → <b>reprise de la transaction
   en cours sans double débit</b> → nouveau paiement traité par le backup. <span class="ok">13 OK / 0 KO</span>.</p>
+  <p><b>Essai de continuité vérifié bout en bout.</b> État nominal (le PRINCIPAL sert) →
+  arrêt du principal → au bout d'environ <b>6–11 s</b> le SECOURS est promu et sert le trafic
+  → un crédit de 50 € effectué <b>pendant la panne</b> (routé vers le secours) fait passer le
+  solde de <b>787 € à 837 €</b> → redémarrage du principal → retour automatique (~15 s) : après
+  réconciliation, le solde lu sur le principal est bien <span class="ok">837 €</span> — les 50 €
+  réalisés pendant la panne ont survécu, <b>aucune transaction perdue</b>.</p>
 </section>
 
 <!-- 7. GOUVERNANCE -->

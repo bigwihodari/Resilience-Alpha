@@ -59,10 +59,10 @@
   <div class="toc">
     <a href="#prereq">① Sur chaque PC <span>Docker, Git, le projet</span></a>
     <a href="#reseau">② Le réseau <span>point d'accès, IP, pare-feu</span></a>
-    <a href="#host">③ Host principal <span>serveur + cockpit</span></a>
-    <a href="#backup">④ Host backup <span>serveur de secours</span></a>
+    <a href="#host">③ Host principal <span>cockpit + banque + haute-dispo</span></a>
+    <a href="#backup">④ Host backup <span>secours (bascule auto)</span></a>
     <a href="#client">⑤ Clients <span>app de paiement</span></a>
-    <a href="#att">⑥ Attaquant <span>console d'attaque</span></a>
+    <a href="#att">⑥ Attaquant <span>7 vecteurs, multi-attaque</span></a>
     <a href="#ordre">⑦ Ordre & dépannage</a>
   </div>
 
@@ -112,13 +112,25 @@ cd Resilience-Alpha</pre>
   <h2 id="host"><span class="n">3</span>🖥️ HOST-PRINCIPAL (serveur principal)</h2>
   <div class="card host">
     <div class="role">Serveur principal + cockpit · IP 192.168.137.1</div>
-    <div class="step"><div class="b">1</div><div>Fichier <code>.env</code> (racine) :
+    <div class="step"><div class="b">1</div><div>Fichier <code>.env</code> (racine) — mettez l'<b>IP réelle du backup</b> :
       <pre>ROLE=primary
 JWT_SECRET=choisir-un-secret-commun
-REPL_TOKEN=choisir-un-token-commun</pre>
-      <span class="c">Notez ces 2 valeurs : identiques sur le backup.</span></div></div>
+REPL_TOKEN=choisir-un-token-commun
+<span class="c"># Haute dispo : vers le PC de secours (pour le visuel + la bascule du cockpit)</span>
+PEER_API_URL=http://192.168.137.2:8000
+HOST_BACKUP=192.168.137.2
+HOST_BACKUP_API_PORT=8000
+HOST_BACKUP_AUTH_PORT=8001</pre>
+      <span class="c">JWT_SECRET et REPL_TOKEN : identiques sur le backup. Sans backup, laissez
+      <code>PEER_API_URL</code> vide et <code>HOST_BACKUP=api</code> (valeurs par défaut).</span></div></div>
     <div class="step"><div class="b">2</div><div>Lancer : <code>.\start.ps1</code> <span class="c">(ou <code>./start.sh</code>)</span></div></div>
     <div class="step"><div class="b">3</div><div>Vérifier : <a class="url" href="http://localhost:8080">http://localhost:8080</a> → cockpit (connexion <code>alice</code> / <code>password123</code>).</div></div>
+    <div class="step"><div class="b">4</div><div>Trois espaces dans l'app host :
+      <ul>
+        <li><b>Cockpit</b> — KPI live (débits, latences, erreurs, CPU/mémoire), détection IA, remédiation, sécurité.</li>
+        <li><b>Haute-Dispo</b> — visuel live PRINCIPAL ⇄ SECOURS : qui sert le trafic, décision de l'IA, journal des bascules.</li>
+        <li><b>Banque</b> — connexion <code>banquier</code> / <code>password123</code> : gérer tous les comptes (créditer / débiter), historique, en temps réel.</li>
+      </ul></div></div>
     <p class="c">Mettre à jour : <code>.\update.ps1</code> · Redémarrer (après modif du .env) : <code>.\restart.ps1</code> · Arrêter tout : <code>.\stop.ps1</code></p>
   </div>
 
@@ -132,6 +144,10 @@ PEER_API_URL=http://192.168.137.1:8000
 JWT_SECRET=le-meme-que-le-principal
 REPL_TOKEN=le-meme-que-le-principal</pre></div></div>
     <div class="step"><div class="b">2</div><div>Lancer : <code>.\start.ps1</code> (il affiche « rôle : backup »).</div></div>
+    <div class="ok">✅ <b>Bascule &amp; retour automatiques</b> : si le principal tombe, le secours est
+      <b>promu</b> tout seul (au bout de ~6 s) et sert le trafic. Quand le principal revient,
+      le secours lui <b>réplique son état</b> (aucune transaction perdue) puis lui <b>rend la main</b>.
+      Tout est visible en direct sur la page <b>Haute-Dispo</b> du cockpit.</div>
   </div>
 
   <!-- client -->
@@ -158,7 +174,11 @@ HOST_BACKUP=192.168.137.2    HOST_BACKUP_API_PORT=8000    HOST_BACKUP_AUTH_PORT=
       <pre>TARGET_URL=http://192.168.137.1:8080
 TARGET_HOST=192.168.137.1</pre></div></div>
     <div class="step"><div class="b">3</div><div>Lancer : <code>.\start.ps1</code> → <a class="url" href="http://localhost:8090">http://localhost:8090</a></div></div>
-    <div class="step"><div class="b">4</div><div>Choisir l'attaque (Saturation / Injection SQL), intensité, <b>Lancer</b>.</div></div>
+    <div class="step"><div class="b">4</div><div><b>7 vecteurs d'attaque</b> disponibles, cochables un par un ou <b>plusieurs à la fois</b> :
+      saturation (DoS), injection SQL, flood API, XSS, bourrage d'identifiants, flood 404, slowloris.</div></div>
+    <div class="step"><div class="b">5</div><div>Régler l'intensité / la durée, puis <b>« Lancer la sélection »</b> — ou
+      <b>« TOUT LANCER »</b> (les 7 d'un coup) pour <b>saturer et faire tomber le principal</b> :
+      on voit alors le <b>secours prendre le relais</b> sur la page Haute-Dispo du cockpit.</div></div>
   </div>
 
   <!-- ordre + dépannage -->
@@ -169,7 +189,13 @@ TARGET_HOST=192.168.137.1</pre></div></div>
     <div class="step"><div class="b">2</div><div>Backup : se connecter au PA + <code>start.ps1</code>.</div></div>
     <div class="step"><div class="b">3</div><div>Clients A/B : se connecter + <code>client/.env</code> + <code>start.ps1</code>.</div></div>
     <div class="step"><div class="b">4</div><div>Attaquant : se connecter + <code>attacker/.env</code> + <code>start.ps1</code>.</div></div>
-    <div class="step"><div class="b">5</div><div>Démo : les clients se paient ; l'attaquant frappe le principal ; le cockpit montre détection → remédiation ; si le principal tombe, les clients basculent sur le backup.</div></div>
+    <div class="step"><div class="b">5</div><div><b>Scénario de démo conseillé :</b>
+      <ol>
+        <li>Les clients A/B se paient ; le <b>banquier</b> (page Banque) crédite/débite des comptes → tout bouge <b>en direct</b> partout (WebSocket).</li>
+        <li>L'attaquant lance <b>plusieurs vecteurs / « TOUT LANCER »</b> sur le principal ; le cockpit montre la <b>détection IA</b> puis la <b>remédiation</b> (bouclier, canari).</li>
+        <li>Le principal sature et <b>tombe</b> → page <b>Haute-Dispo</b> : le <b>SECOURS est promu</b> et sert le trafic ; les clients continuent à payer (bascule nginx, aucune transaction perdue).</li>
+        <li>On <b>stoppe l'attaque</b> : le principal se répare → <b>retour automatique</b> au principal (réconciliation) ; le solde est intact.</li>
+      </ol></div></div>
   </div>
 
   <table>

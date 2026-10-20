@@ -61,6 +61,39 @@ card(s, 0.6, 4.6, 12.1, 2.2, NAVY);
 tb(s, "Flux de résilience", { x: 0.9, y: 4.75, w: 11, h: 0.4, fontSize: 14, bold: true, color: WHITE, margin: 0 });
 tb(s, "trafic + attaque  →  métriques & logs  →  détecteur ML (score)  →  orchestrateur (décision + action)  →  vérification canari  →  cockpit", { x: 0.9, y: 5.3, w: 11.5, h: 1.2, fontSize: 15, color: LIGHT, margin: 0, lineSpacingMultiple: 1.2 });
 
+/* 3b — Interface banquier */
+s = p.addSlide(); s.background = { color: WHITE };
+titleBar(s, "Interface banquier : les comptes en temps réel", "App hôte · rôle banquier");
+card(s, 0.6, 1.8, 6.0, 4.6, SOFT);
+tb(s, "🏦 Ce que voit le banquier", { x: 0.85, y: 2.0, w: 5.5, h: 0.5, fontSize: 15, bold: true, color: NAVY, margin: 0 });
+tb(s, "• Tous les comptes clients + leurs soldes\n• Masse monétaire totale\n• Créditer / débiter n'importe quel compte\n• Historique des mouvements par client\n• Mise à jour EN TEMPS RÉEL (WebSocket)\n  — aucun rafraîchissement manuel", { x: 0.85, y: 2.6, w: 5.5, h: 3.6, fontSize: 13.5, color: NAVY, margin: 0, lineSpacingMultiple: 1.3 });
+card(s, 6.8, 1.8, 5.9, 4.6, "E3F3EC");
+tb(s, "🔐 Accès strictement réservé", { x: 7.05, y: 2.0, w: 5.4, h: 0.5, fontSize: 15, bold: true, color: GREEN, margin: 0 });
+tb(s, "• Rôle « banker » porté par le JWT\n• Endpoints /bank/* protégés\n• Un client normal reçoit 403 (vérifié)\n• Le banquier est exclu de l'annuaire\n  des clients", { x: 7.05, y: 2.6, w: 5.45, h: 3.0, fontSize: 13.5, color: NAVY, margin: 0, lineSpacingMultiple: 1.3 });
+tb(s, "Compte de démo : banquier / password123", { x: 7.05, y: 5.7, w: 5.4, h: 0.5, fontSize: 14, bold: true, color: PURPLE, margin: 0 });
+
+/* 3c — Attaquant multi-vecteurs */
+s = p.addSlide(); s.background = { color: WHITE };
+titleBar(s, "Attaquant : attaques multiples simultanées", "PC attaquant · 7 vecteurs");
+tb(s, "7 vecteurs lançables un par un, à plusieurs, ou TOUS d'un coup (« tout lancer ») pour saturer et faire tomber le serveur principal — ce qui déclenche justement la bascule vers le secours.", { x: 0.6, y: 1.65, w: 12.1, h: 0.8, fontSize: 14, color: NAVY, margin: 0, lineSpacingMultiple: 1.15 });
+const vecs = [
+  ["🔑", "dos_auth", "flood de /auth/login (bcrypt coûteux)"],
+  ["💉", "sqli", "injection SQL → WAF"],
+  ["🌊", "api_flood", "charge l'API + la base"],
+  ["📝", "xss", "injection → WAF"],
+  ["🔓", "cred_stuffing", "bourrage d'identifiants"],
+  ["🚫", "notfound_flood", "bruit de 404"],
+  ["🐌", "slowloris", "connexions lentes maintenues ouvertes"],
+];
+vecs.forEach((v, i) => {
+  const x = 0.6 + (i % 4) * 3.05, y = 2.55 + Math.floor(i / 4) * 1.78;
+  card(s, x, y, 2.9, 1.6, SOFT);
+  tb(s, v[0], { x: x + 0.15, y: y + 0.12, w: 1, h: 0.5, fontSize: 22, margin: 0 });
+  tb(s, v[1], { x: x + 0.15, y: y + 0.66, w: 2.6, h: 0.35, fontSize: 13, bold: true, color: NAVY, margin: 0 });
+  tb(s, v[2], { x: x + 0.15, y: y + 1.0, w: 2.6, h: 0.55, fontSize: 10.5, color: MUT, margin: 0, lineSpacingMultiple: 1.0 });
+});
+tb(s, "Statistiques par vecteur + agrégées · métriques Prometheus par vecteur.", { x: 0.6, y: 6.5, w: 12, h: 0.4, fontSize: 12.5, bold: true, color: PURPLE, margin: 0 });
+
 /* 4 — Boucle autonome */
 s = p.addSlide(); s.background = { color: WHITE };
 titleBar(s, "La boucle autonome (zéro intervention)", "Le cœur du sujet");
@@ -113,6 +146,19 @@ card(s, 6.8, 1.8, 5.9, 4.5, "E3F3EC");
 tb(s, "🔁 Bascule & reprise", { x: 7.05, y: 1.98, w: 5.4, h: 0.45, fontSize: 15, bold: true, color: GREEN, margin: 0 });
 tb(s, "1. Le serveur principal tombe\n2. Le client bascule AUTOMATIQUEMENT sur le backup\n3. La transaction en cours est REPRISE\n   (clé d'idempotence) — sans double débit\n4. Service maintenu, zéro intervention", { x: 7.05, y: 2.5, w: 5.45, h: 3.0, fontSize: 13.5, color: NAVY, margin: 0, lineSpacingMultiple: 1.3 });
 tb(s, "Recette failover : 13 / 13 ✓", { x: 7.05, y: 5.7, w: 5.4, h: 0.5, fontSize: 15, bold: true, color: GREEN, margin: 0 });
+
+/* 6c — Continuité : failover → failback */
+s = p.addSlide(); s.background = { color: WHITE };
+titleBar(s, "Continuité prouvée : failover → failback", "Haute dispo · essai vérifié");
+card(s, 0.6, 1.75, 6.0, 3.2, "FBE8E6");
+tb(s, "⬇️ Bascule (failover)", { x: 0.85, y: 1.92, w: 5.5, h: 0.45, fontSize: 15, bold: true, color: RED, margin: 0 });
+tb(s, "• 3 échecs de réplication consécutifs (2 s)\n• Le SECOURS est promu automatiquement\n• Les clients basculent via nginx (upstream)\n• Clés d'idempotence → reprise exactly-once\n  (pas de double débit)\n• Le cockpit hôte reste vivant (son nginx\n  bascule aussi)", { x: 0.85, y: 2.42, w: 5.55, h: 2.5, fontSize: 12.5, color: NAVY, margin: 0, lineSpacingMultiple: 1.25 });
+card(s, 6.8, 1.75, 5.9, 3.2, "E3F3EC");
+tb(s, "⬆️ Retour (failback)", { x: 7.05, y: 1.92, w: 5.4, h: 0.45, fontSize: 15, bold: true, color: GREEN, margin: 0 });
+tb(s, "• Le principal se répare\n• Le secours lui REJOUE son état\n  (réconciliation — rien de perdu)\n• Puis repasse en mode réplication\n• Le principal reprend la main", { x: 7.05, y: 2.42, w: 5.45, h: 2.5, fontSize: 12.5, color: NAVY, margin: 0, lineSpacingMultiple: 1.25 });
+card(s, 0.6, 5.15, 12.1, 1.75, NAVY);
+tb(s, "Essai bout en bout — la preuve", { x: 0.9, y: 5.3, w: 11.5, h: 0.4, fontSize: 14, bold: true, color: WHITE, margin: 0 });
+tb(s, [{ text: "PRINCIPAL sert → arrêt → ~6–11 s : SECOURS promu → crédit de 50 € PENDANT la panne (", options: { color: LIGHT } }, { text: "787 € → 837 €", options: { color: WHITE, bold: true } }, { text: ") → redémarrage → ~15 s : retour au PRINCIPAL, solde lu = ", options: { color: LIGHT } }, { text: "837 €", options: { color: WHITE, bold: true } }, { text: "  ·  aucune transaction perdue", options: { color: LIGHT } }], { x: 0.9, y: 5.75, w: 11.5, h: 1.0, fontSize: 14, margin: 0, lineSpacingMultiple: 1.2 });
 
 /* 7 — Sécurité */
 s = p.addSlide(); s.background = { color: WHITE };
