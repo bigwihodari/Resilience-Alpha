@@ -216,6 +216,13 @@
           <div class="gkpi"><div class="n" id="g-capleft" style="color:var(--green)">0€</div><div class="l">reste à voler</div></div>
           <div class="gkpi"><div class="n" id="g-ready" style="color:var(--amber);font-size:16px">—</div><div class="l">statut</div></div>
         </div>
+        <div style="margin:10px 0">
+          <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)">
+            🧠 IA distraite par tes attaques <span class="val" id="g-distract" style="float:none;margin-left:auto">0 %</span>
+          </div>
+          <div class="bar" style="height:9px"><i id="g-distractbar" style="background:linear-gradient(90deg,#E5484D,#E7B53C,#3BD671)"></i></div>
+          <div class="note" id="g-distracthint">⚠ L'IA analyse tout. Lance des attaques (vecteurs en haut) pour l'occuper, PUIS sonde / vole — plus elle est distraite, plus tu voles gros et discrètement.</div>
+        </div>
         <div class="gactions">
           <button class="gbtn recon" id="btn-recon">🔍 SONDER la cible (reconnaissance)</button>
           <div class="heistrow">
@@ -507,9 +514,19 @@ function renderGame(s){
       + "Tes attaques sont refusées pendant le cooldown.";
   } else cd.classList.add("hidden");
 
-  // Activation des boutons
-  $("btn-recon").disabled = blocked;
-  $("btn-heist").disabled = blocked || (done < need);
+  // Jauge de distraction de l'IA (montée par tes attaques)
+  const dist = Math.round((t.distraction || 0) * 100);
+  const weak = !!t.ia_weakened;
+  const dEl = $("g-distract"), dBar = $("g-distractbar"), dHint = $("g-distracthint");
+  if (dEl) dEl.textContent = dist + " %";
+  if (dBar) dBar.style.width = Math.max(3, dist) + "%";
+  if (dHint) dHint.textContent = weak
+    ? "✅ IA distraite — sonde et vole maintenant (plus la jauge est haute, plus tu voles gros et discrètement)."
+    : "⚠ L'IA analyse tout. Lance des attaques (vecteurs en haut) pour l'occuper, PUIS sonde / vole.";
+
+  // Activation des boutons : il faut distraire l'IA (attaques) ET assez de recon
+  $("btn-recon").disabled = blocked || !weak;
+  $("btn-heist").disabled = blocked || (done < need) || !weak;
 }
 
 async function pollGame(){

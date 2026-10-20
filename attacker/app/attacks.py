@@ -644,6 +644,9 @@ class GameController:
                 "recon_needed": st.get("recon_needed", 0),
                 "ready_to_heist": recon_count >= st.get("recon_needed", 99),
                 "degraded": st.get("degraded", False),
+                "distraction": st.get("distraction", 0),
+                "ia_weakened": st.get("ia_weakened", False),
+                "distraction_min": st.get("distraction_min", 0.25),
             },
         }
 

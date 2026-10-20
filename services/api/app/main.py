@@ -8,6 +8,7 @@ import os
 import re
 import time
 import json
+from collections import deque
 import math
 import html
 import random
@@ -58,13 +59,13 @@ game_winner = {"name": None, "camp": None, "networth": 0.0, "at": None}
 BANK_USER = os.environ.get("BANK_USER", "trafficbot")
 
 # ---- Shop & upgrades (jeu idle) : coûts EXPONENTIELS cost = base * growth^niveau ----
+# Améliorations GLOBALES (compte). La PRODUCTION se booste par LIVRET (bouton
+# Booster sur chaque livret) -> chaque livret a ses propres améliorations.
 SHOP = {
     "livret_slot": {"label": "Nouveau livret", "base": 500.0, "growth": 1.6,
-                    "desc": "Débloque un livret d'épargne supplémentaire."},
-    "global_mult": {"label": "Multiplicateur de production", "base": 1000.0, "growth": 1.5,
-                    "desc": "+10 % de production sur TOUS tes livrets, par niveau."},
+                    "desc": "Débloque un livret d'épargne supplémentaire (vide, à booster ensuite)."},
     "security":    {"label": "Coffre-fort", "base": 800.0, "growth": 1.45,
-                    "desc": "Réduit la probabilité de te faire voler, par niveau."},
+                    "desc": "Sécurité : réduit le risque de te faire voler par un attaquant (par niveau)."},
 }
 LIVRET_RATE_BASE = 200.0      # coût de base pour booster le taux d'un livret
 LIVRET_RATE_GROWTH = 1.18
@@ -280,6 +281,24 @@ game_state = {
 }
 game_lock = threading.Lock()
 degraded = {"on": False}  # bascule : endpoints métier en 503 (gated par GAME_DEGRADE)
+
+# --- DISTRACTION : les ATTAQUES (flood) occupent l'IA -> détection affaiblie et
+# vol possible/plus gros. Sans attaque en cours, l'IA analyse tout et bloque la
+# recon/le vol. C'est le vrai but : affaiblir l'IA AVANT d'exfiltrer. ---
+_req_times = deque(maxlen=6000)                 # horodatage des requêtes (fenêtre glissante)
+DISTRACT_WINDOW = float(os.environ.get("DISTRACT_WINDOW", "8"))     # s
+DISTRACT_BASELINE = float(os.environ.get("DISTRACT_BASELINE", "4")) # req/s "normales" (trafic légitime)
+DISTRACT_SPAN = float(os.environ.get("DISTRACT_SPAN", "45"))        # req/s au-dessus = distraction max
+DISTRACT_MIN = float(os.environ.get("DISTRACT_MIN", "0.25"))        # distraction mini pour agir
+
+
+def _distraction() -> float:
+    """0..1 : à quel point l'IA est distraite par la charge d'attaque en cours."""
+    now = time.time()
+    while _req_times and now - _req_times[0] > DISTRACT_WINDOW:
+        _req_times.popleft()
+    rate = len(_req_times) / DISTRACT_WINDOW
+    return max(0.0, min(1.0, (rate - DISTRACT_BASELINE) / DISTRACT_SPAN))
 
 GAME_RECON = Counter("game_recon_total", "Sondes de reconnaissance (jeu)")
 GAME_HEIST = Counter("game_heist_total", "Tentatives de retrait réussies (jeu)")
@@ -533,6 +552,16 @@ def require_banker(claims: dict = Depends(current_claims)) -> str:
 
 
 app = FastAPI(title="Resilience-Alpha — Payment API")
+
+
+@app.middleware("http")
+async def _track_load(request, call_next):
+    """Compte la charge entrante (pour calculer la distraction de l'IA)."""
+    try:
+        _req_times.append(time.time())
+    except Exception:  # noqa: BLE001
+        pass
+    return await call_next(request)
 
 
 # ---------------- Temps réel (WebSocket) ----------------
@@ -1815,6 +1844,10 @@ def _game_public() -> dict:
     g["cooldown_remaining"] = cd
     g["loot_cap_remaining"] = round(max(0.0, GAME_LOOT_CAP - g["loot"] - g["loot_neutralized"]), 2)
     g["degraded"] = degraded["on"]
+    d = _distraction()
+    g["distraction"] = round(d, 2)
+    g["distraction_min"] = DISTRACT_MIN
+    g["ia_weakened"] = d >= DISTRACT_MIN
     return g
 
 
@@ -1880,8 +1913,13 @@ def game_recon(request: Request, x_player: str = Header(default=None)):
     cd = _actor_cooldown(actor, is_primary)
     if cd > 0:
         raise HTTPException(403, f"attaquant bloqué — cooldown {cd}s")
+    d = _distraction()
+    if d < DISTRACT_MIN:
+        raise HTTPException(409, "l'IA analyse tout le trafic — lance des attaques (vecteurs) "
+                                 "pour la distraire AVANT de sonder")
     GAME_RECON.inc()
-    _bump_suspicion(actor, 0.04, _actor_ip(request), "reconnaissance")
+    # Suspicion atténuée quand l'IA est distraite par la charge d'attaque.
+    _bump_suspicion(actor, 0.04 * (1 - 0.7 * d), _actor_ip(request), "reconnaissance")
     _maybe_block(actor, is_primary, "énumération repérée par l'IA")
     with Session(engine()) as s:
         clients = s.execute(
@@ -1964,8 +2002,10 @@ def game_targets():
 
 def _heist_client(target: str, body: HeistIn):
     src = (body.source or "courant").lower()
-    want = float(body.amount) if (body.amount and body.amount > 0) else HEIST_CLIENT_MAX
-    want = min(want, HEIST_CLIENT_MAX * _toolkit_factor())
+    # Plafond relevé par la distraction de l'IA : plus elle est occupée, plus on vole gros.
+    cap = HEIST_CLIENT_MAX * _toolkit_factor() * (1 + 2 * _distraction())
+    want = float(body.amount) if (body.amount and body.amount > 0) else cap
+    want = min(want, cap)
     with Session(engine()) as s:
         u = s.scalar(select(User).where(User.username == target))
         acc = s.scalar(select(Account).where(Account.user_id == u.id).with_for_update()) if u else None
@@ -2024,8 +2064,9 @@ def _heist_client(target: str, body: HeistIn):
 
 
 def _heist_bank(target: str, body: HeistIn):
-    want = float(body.amount) if (body.amount and body.amount > 0) else HEIST_BANK_MAX
-    want = min(want, HEIST_BANK_MAX * _toolkit_factor())
+    cap = HEIST_BANK_MAX * _toolkit_factor() * (1 + 2 * _distraction())
+    want = float(body.amount) if (body.amount and body.amount > 0) else cap
+    want = min(want, cap)
     with Session(engine()) as s:
         u = s.scalar(select(User).where(User.username == target))
         acc = s.scalar(select(Account).where(Account.user_id == u.id).with_for_update()) if u else None
@@ -2121,6 +2162,10 @@ def game_heist(body: HeistIn, request: Request, x_player: str = Header(default=N
     cd = _actor_cooldown(actor, is_primary)
     if cd > 0:
         raise HTTPException(403, f"attaquant bloqué — cooldown {cd}s")
+    distraction = _distraction()
+    if distraction < DISTRACT_MIN:
+        raise HTTPException(409, "l'IA surveille activement — distrais-la avec des attaques "
+                                 "(vecteurs) avant de tenter un retrait")
     target = (body.target or game_state.get("victim") or "").strip()
     if not target:
         raise HTTPException(400, "aucune cible sélectionnée")
@@ -2151,6 +2196,7 @@ def game_heist(body: HeistIn, request: Request, x_player: str = Header(default=N
     delta = {"bank": 0.25, "client": 0.12, "attacker": 0.08}.get(tt, 0.12)
     if caught and tt != "bank":  # la banque cramée bloque déjà par elle-même
         delta += 0.3
+    delta *= (1 - 0.6 * distraction)  # l'IA distraite détecte moins le vol
     _bump_suspicion(actor, delta, _actor_ip(request), f"vol {tt}" + (" (cramé)" if caught else ""))
     blocked, p = _maybe_block(actor, is_primary, "activité de vol suspecte")
     res["suspicion"] = round(_susp(actor)["score"], 3)
