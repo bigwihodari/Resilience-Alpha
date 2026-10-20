@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8">
-<title>Dossier — PROJECT RESILIENCE-ALPHA</title>
+<title>Dossier — RESILIENCE GUARD</title>
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
   :root{ --ink:#261E48; --accent:#4B3FA6; --lav:#A1A6D4; --soft:#EEF0F8; --line:#D4D7EC;
@@ -28,8 +28,6 @@
   .kpi div{ flex:1; min-width:120px; background:var(--soft); border-radius:8px; padding:8px 10px; }
   .kpi b{ display:block; font-size:15pt; color:var(--accent); }
   .muted{ color:#6a6594; font-size:9.5pt; }
-
-  /* Cover */
   .cover{ height:247mm; display:flex; flex-direction:column; justify-content:center; }
   .cover .badge{ font-size:10pt; letter-spacing:.18em; text-transform:uppercase; color:var(--accent); font-weight:700; }
   .cover h1{ font-size:30pt; font-weight:800; margin:8px 0; }
@@ -43,14 +41,16 @@
 <!-- COUVERTURE -->
 <section class="cover">
   <div class="badge">Workshop EPSI Bac+5 · Dossier d'ingénierie & de gouvernance</div>
-  <h1>PROJECT RESILIENCE-ALPHA</h1>
-  <div class="sub">Cyber-résilience et reprise autonome d'une plateforme de paiement</div>
+  <h1>RESILIENCE GUARD</h1>
+  <div class="sub">Module de sécurité & de résilience « plug-and-protect » pour toute application</div>
   <div class="box">
-    <p><b>Démonstrateur :</b> un SI de paiement fictif conteneurisé qui subit une attaque
-    contrôlée, la détecte par machine learning et se rétablit <b>sans intervention humaine</b>,
-    avec preuve par transaction.</p>
-    <p class="muted">Dépôt : github.com/bigwihodari/Resilience-Alpha · Environnement et données
-    entièrement fictifs.</p>
+    <p><b>Le produit :</b> une brique réutilisable qui se pose <b>devant n'importe quelle application</b>,
+    sans toucher à son code, et lui ajoute automatiquement : WAF, KPI/observabilité, détection
+    d'anomalies par IA, remédiation autonome (zéro-touch), haute disponibilité, et un assistant IA
+    (RAG) — le tout piloté depuis un cockpit unique.</p>
+    <p class="muted">Démontré sur une app de paiement et une app vierge. Dépôt :
+    github.com/bigwihodari/Resilience-Alpha (dossiers <code>module/</code> et <code>demo-apps/</code>).
+    Environnement et données entièrement fictifs.</p>
   </div>
   <div class="foot">
     Consortium : Workshop2026-M2-G&lt;n&gt; · Octobre 2026<br>
@@ -58,250 +58,203 @@
   </div>
 </section>
 
-<!-- 1. RÉSUMÉ -->
+<!-- 1 -->
 <section class="section">
   <h2>1. Résumé exécutif</h2>
-  <p>Resilience-Alpha démontre une <b>chaîne de cyber-résilience de bout en bout</b> : une
-  plateforme de paiement fictive, une attaque réelle lancée depuis un poste distinct, une
-  détection par apprentissage automatique, une remédiation automatique et une vérification
-  du rétablissement par une nouvelle transaction réussie.</p>
+  <p><b>Problème.</b> Protéger et superviser une application (WAF, métriques, détection d'attaque,
+  reprise après incident, haute disponibilité) demande d'habitude d'intégrer et d'exploiter une
+  dizaine d'outils, au cas par cas, dans chaque projet. C'est long, coûteux et rarement homogène.</p>
+  <p><b>Notre réponse : Resilience Guard.</b> Un <b>module unique, réutilisable et autonome</b> qu'on
+  installe <b>en une commande devant l'application à protéger</b>. Il apporte d'un bloc la défense
+  (WAF), l'observabilité (KPI live), la détection par machine learning, la remédiation sans
+  intervention humaine, la bascule haute disponibilité, et un assistant IA qui sait répondre sur ce
+  qui se passe réellement sur le serveur (il lit les logs/erreurs en direct).</p>
+  <p><b>Valeur.</b> On protège et supervise <b>n'importe quelle app</b> (dockerisée ou non) sans
+  modifier son code, avec un cockpit prêt à l'emploi et une reprise automatique des incidents.</p>
   <div class="kpi">
-    <div><b>~15 s</b>détection → reprise (RTO)</div>
-    <div><b>100 %</b>reprise sans humain</div>
-    <div><b>15/15 · 13/13</b>recettes résilience · failover</div>
-    <div><b>2 serveurs</b>bascule automatique (HA)</div>
+    <div><b>1 cmd</b>installation devant l'app</div>
+    <div><b>7</b>outils défensifs intégrés</div>
+    <div><b>0</b>ligne de code à modifier dans l'app</div>
+    <div><b>&lt; 8 s</b>bascule sur le secours</div>
   </div>
-  <p>La solution couvre les cinq domaines exigés : développement (microservices de paiement),
-  infrastructure (conteneurisation + observabilité), IA/Data (détection ML + assistant RAG),
-  cybersécurité (attaque, WAF, SOC, secrets, durcissement) et gouvernance (EBIOS RM, PCA/PRA,
-  NIS2/DORA).</p>
-
-  <h3>Les deux incidents et leurs réponses (distinctes)</h3>
-  <table>
-    <tr><th>Incident</th><th>Atteinte</th><th>Réponse automatique</th><th>Preuve</th></tr>
-    <tr><td>Déni de service (DoS)</td><td>Disponibilité</td><td>Bouclier anti-DoS (load-shedding) + relâche auto</td><td>Transaction canari réussie</td></tr>
-    <tr><td>Injection SQL</td><td>Compromission</td><td>Blocage WAF + contrôle d'intégrité des données</td><td>Intégrité confirmée</td></tr>
-  </table>
+  <p class="muted">NB : le dépôt contient aussi un démonstrateur « jeu » (bac à sable d'attaques) ;
+  il n'est pas l'objet de la présentation — le livrable est le <b>module</b>.</p>
 </section>
 
-<!-- 2. ARCHITECTURE -->
+<!-- 2 -->
 <section class="section">
-  <h2>2. Architecture &amp; flux</h2>
-  <p>Deux postes sur le réseau Wi-Fi du groupe (<code>RESILIENCE-G&lt;n&gt;</code>, 192.168.137.x) :
-  le <b>PC Hôte</b> exécute la plateforme, le <b>PC Attaquant</b> lance les attaques depuis une
-  application dédiée proposant <b>7 vecteurs</b> (DoS auth, injection SQL, flood API, XSS,
-  bourrage d'identifiants, flood de 404, slowloris), activables <b>simultanément</b>.</p>
-  <h3>Composants (conteneurs Docker Compose)</h3>
+  <h2>2. Le module : architecture & installation</h2>
+  <h3>Principe « plug-and-protect »</h3>
+  <p>L'application à protéger tourne <b>derrière la passerelle</b> du module (reverse-proxy). On
+  renseigne une seule variable — l'URL amont de l'app — et on lance l'overlay Docker Compose :</p>
+  <p><code>PROTECTED_UPSTREAM=http://mon-app:8000 docker compose -f docker-compose.module.yml up -d</code></p>
+  <p>L'app est alors servie via la passerelle (port 8080), protégée et supervisée. Cockpit sur 8088,
+  Grafana sur 3000. Pour une app non-dockerisée, <code>PROTECTED_UPSTREAM</code> pointe vers son URL.</p>
+  <h3>Composants du module</h3>
   <table>
-    <tr><th>Service</th><th>Rôle</th><th>Technologie</th></tr>
-    <tr><td>frontend</td><td>App unique de l'hôte : paiement + cockpit + pages Banque &amp; Haute-Dispo (reverse-proxy)</td><td>React + Tailwind, nginx</td></tr>
-    <tr><td>api</td><td>Transactions fictives, /metrics, WAF applicatif, interface banquier (/bank/*), agrégation HA (/ha/cluster)</td><td>FastAPI</td></tr>
-    <tr><td>auth</td><td>Authentification JWT, bouclier anti-DoS, WAF</td><td>FastAPI</td></tr>
-    <tr><td>db</td><td>Comptes &amp; transactions (non exposée)</td><td>PostgreSQL</td></tr>
-    <tr><td>detector</td><td>Détection d'anomalies ML (score)</td><td>scikit-learn</td></tr>
-    <tr><td>orchestrator</td><td>Moteur de remédiation (décide/agit/vérifie)</td><td>FastAPI</td></tr>
-    <tr><td>prometheus / grafana / loki / promtail / cadvisor</td><td>Observabilité (métriques, logs, CPU/mém)</td><td>Stack Grafana</td></tr>
-    <tr><td>traffic-gen</td><td>Trafic légitime (baseline du modèle)</td><td>Python</td></tr>
-    <tr><td>assistant</td><td>Assistant RAG opérateur (lecture doc, sans privilège)</td><td>Ollama + LangChain</td></tr>
-    <tr><td>attacker (poste distinct)</td><td>Console d'attaque multi-vecteurs : 7 vecteurs lançables simultanément (« tout lancer »)</td><td>FastAPI + Chart.js</td></tr>
+    <tr><th>Composant</th><th>Rôle</th><th>Pilier</th></tr>
+    <tr><td>passerelle (WAF + proxy)</td><td>Filtre les requêtes (signatures OWASP), proxifie vers l'app, expose les métriques</td><td>CYBER / DEV</td></tr>
+    <tr><td>Prometheus + Grafana + Loki</td><td>KPI (débit, latence, erreurs), tableaux de bord, logs centralisés</td><td>INFRA</td></tr>
+    <tr><td>détecteur (Isolation Forest)</td><td>Score d'anomalie sur le trafic observé par la passerelle</td><td>IA / DATA</td></tr>
+    <tr><td>orchestrateur</td><td>Remédiation autonome : bouclier, vérification, intégrité</td><td>CYBER / IA</td></tr>
+    <tr><td>assistant (RAG, Ollama local)</td><td>Répond aux questions d'exploitation ; lit les logs/erreurs en direct</td><td>IA / DATA</td></tr>
+    <tr><td>cockpit</td><td>Tableau de bord unique : santé, KPI, détection, remédiation, HA, menaces</td><td>DEV / TRANSFO</td></tr>
+    <tr><td>overlay HA</td><td>Reverse-proxy de bascule + passerelle de secours (failover/retour auto)</td><td>INFRA</td></tr>
   </table>
-  <h3>Flux de résilience</h3>
-  <p><code>trafic + attaque → métriques Prometheus + logs Loki → détecteur ML (score) →
-  orchestrateur (décision + action) → vérification canari → cockpit</code></p>
-  <h3>Montage haute disponibilité (5 PC)</h3>
-  <p>Deux serveurs (<b>principal + secours</b>), deux clients, un attaquant. L'application
-  <b>client est séparée du serveur</b> : les clients se paient en direct (transfert entre
-  comptes + annuaire de recherche), le serveur gère transactions, connexions et supervision
-  (cockpit). Le backup <b>réplique</b> le principal (comptes + clés d'idempotence). Deux
-  mécanismes assurent la continuité : <b>bascule automatique</b> (failover) si le principal
-  tombe, puis <b>retour automatique</b> (failback) avec réconciliation dès qu'il se répare.</p>
-  <h3>Pages de supervision de l'app hôte</h3>
-  <p>Outre le cockpit, l'app hôte expose deux vues dédiées. <b>Banque</b> (réservée au rôle
-  <i>banquier</i>) : tous les comptes clients et leurs soldes, masse monétaire totale,
-  crédit/débit de n'importe quel compte et historique des mouvements par client, le tout mis
-  à jour <b>en temps réel par WebSocket</b>. <b>Haute-Dispo</b> : visuel live des nœuds
-  PRINCIPAL / SECOURS, nœud servant le trafic, raisonnement du système IA et journal horodaté
-  des bascules (endpoint d'agrégation <code>/ha/cluster</code>).</p>
-</section>
-
-<!-- 3. DÉTECTION ML -->
-<section class="section">
-  <h2>3. Détection d'anomalies (machine learning)</h2>
-  <h3>Données &amp; préparation</h3>
-  <p>Le détecteur interroge Prometheus toutes les 5 s et construit un vecteur de features de
-  débit : requêtes totales/s, requêtes auth/s, taux d'erreurs 4xx/s, 5xx/s. Il apprend la
-  « vie normale » grâce au générateur de trafic légitime.</p>
-  <h3>Modèle</h3>
-  <p>Un <b>Isolation Forest</b> est entraîné sur la normale ; en complément, on apprend la
-  distribution normale (moyenne/écart-type) et on mesure l'écart courant par une <b>distance
-  standardisée</b> (Mahalanobis diagonale) avec un plancher de bruit adapté au débit. Le flag
-  d'anomalie est piloté par cette distance (fiable sur les gros écarts), l'Isolation Forest
-  servant de corroboration. Aucun seuil codé en dur sur les métriques brutes.</p>
-  <h3>Résultats mesurés</h3>
-  <table>
-    <tr><th>Situation</th><th>Débit auth</th><th>Latence p95 auth</th><th>Score d'anomalie</th></tr>
-    <tr><td>Normale</td><td>~1 req/s</td><td>~95 ms</td><td>~0</td></tr>
-    <tr><td>Sous DoS</td><td>~35 req/s</td><td>~490 ms</td><td>100 (anomalie)</td></tr>
-  </table>
-  <h3>Limites</h3>
-  <p>Détection sensible à la qualité de la baseline ; attaques « low-and-slow » moins visibles ;
-  modèle persisté mais à ré-entraîner si le profil de trafic change (endpoint <code>/retrain</code>).</p>
-</section>
-
-<!-- 4. REMÉDIATION -->
-<section class="section">
-  <h2>4. Remédiation autonome (zero-touch)</h2>
-  <p>L'orchestrateur surveille le détecteur. Sur anomalie confirmée, il <b>décide</b>, <b>agit</b>,
-  puis <b>vérifie</b> — sans intervention humaine.</p>
-  <h3>Playbook disponibilité (DoS)</h3>
+  <p>La passerelle expose <b>exactement les mêmes métriques</b> que l'app de démo
+  (<code>http_requests_total</code>, <code>http_request_duration_seconds</code>,
+  <code>waf_blocked_total</code>) : détecteur, Prometheus et cockpit fonctionnent donc sans
+  adaptation, quelle que soit l'app protégée.</p>
+  <h3>Applications de démonstration</h3>
   <ul>
-    <li>Activation du <b>bouclier</b> sur l'auth : au-delà d'un débit, les requêtes externes
-    reçoivent un 429 immédiat (sans calcul bcrypt coûteux) → l'auth récupère.</li>
-    <li>Vérification par <b>transaction canari</b> (login + paiement) → service rétabli.</li>
-    <li>Relâche automatique du bouclier quand l'attaque cesse.</li>
+    <li><b>demo-apps/paiement</b> — une app métier (connexion + paiement) protégée par le module.</li>
+    <li><b>demo-apps/vitrine</b> — une app <b>vierge</b> (site statique) : on y pose le module tel quel
+    pour montrer que « ça marche sur n'importe quoi ».</li>
   </ul>
-  <h3>Playbook compromission (injection SQL)</h3>
+</section>
+
+<!-- 3 -->
+<section class="section">
+  <h2>3. DEV & INFRA</h2>
+  <h3>Conteneurisation & overlay</h3>
+  <p>Tout est conteneurisé (Docker Compose). Le module est un <b>overlay</b> (<code>docker-compose.module.yml</code>)
+  qu'on superpose à l'app : aucune modification du code applicatif, découplage total. Les images de
+  base sont pré-tirées pour des builds reproductibles hors-ligne (labo isolé).</p>
+  <h3>Passerelle (reverse-proxy applicatif)</h3>
+  <p>Écrite en FastAPI + httpx : pour chaque requête elle applique le WAF, gère le bouclier de
+  délestage, proxifie vers l'app, mesure latence et statut, puis expose <code>/metrics</code>.
+  Aucune dépendance à l'app protégée.</p>
+  <h3>Observabilité</h3>
+  <p>Prometheus agrège les métriques (débit, latence p95, erreurs 4xx/5xx, CPU/mémoire, requêtes
+  bloquées). Grafana fournit les tableaux de bord ; Loki + Promtail centralisent les logs de tous les
+  conteneurs. Le cockpit consomme ces sources pour une vue unique et temps réel.</p>
+</section>
+
+<!-- 4 -->
+<section class="section">
+  <h2>4. IA / DATA</h2>
+  <h3>Détection d'anomalies (machine learning)</h3>
+  <p>Un modèle <b>Isolation Forest</b> apprend le comportement « normal » du trafic (débit, erreurs)
+  observé par la passerelle, puis calcule un <b>score d'anomalie</b> en continu. L'écart à la normale
+  (distance standardisée) déclenche un drapeau au-delà d'un seuil, avec un plancher de bruit pour
+  éviter les faux positifs au repos. Le modèle est persistant et ré-entraînable.</p>
+  <h3>Détection par IP/acteur (probabiliste)</h3>
+  <p>La suspicion est suivie <b>par IP</b> : elle monte avec les signaux (motifs d'attaque, pics WAF,
+  retraits anormaux) et décroît avec le temps. Le blocage est <b>probabiliste et isolé</b> : plus la
+  suspicion est haute, plus la probabilité de blocage augmente, et on ne bloque que l'IP suspecte —
+  jamais tout le monde.</p>
+  <h3>Assistant IA (RAG) auto-rempli</h3>
+  <p>Un assistant local (Ollama, modèle ≤ 8B + embeddings) répond aux questions d'exploitation en
+  s'appuyant sur la documentation (FAISS) <b>et sur les logs/erreurs du serveur lus en direct via
+  Loki</b> : il sait dire ce qui se passe réellement (erreurs, blocages WAF, bascules). Sans
+  privilèges : il lit, il n'agit pas.</p>
+</section>
+
+<!-- 5 -->
+<section class="section">
+  <h2>5. CYBER — défense & remédiation</h2>
+  <h3>WAF applicatif</h3>
+  <p>La passerelle inspecte chaque entrée (chemin, requête, corps) avec des signatures type OWASP
+  (injection SQL, XSS…) et <b>bloque en 403</b> toute requête malveillante, en incrémentant
+  <code>waf_blocked_total</code> pour la supervision.</p>
+  <h3>Remédiation autonome (zéro-touch)</h3>
+  <p>L'orchestrateur surveille le détecteur. Sur anomalie confirmée, il <b>décide puis exécute</b> une
+  remédiation (bouclier anti-DoS / délestage via la passerelle), <b>vérifie</b> le retour à un état
+  utilisable, et tient une <b>timeline</b> d'incident — sans intervention humaine. Accès maîtrisés :
+  l'orchestrateur n'a pas de god-mode, il agit via une API d'administration restreinte et tracée.</p>
+  <h3>Haute disponibilité (failover & retour)</h3>
+  <p>L'overlay HA place un reverse-proxy de bascule devant une passerelle <b>principale</b> et une
+  passerelle de <b>secours</b>. Si le principal tombe, le trafic bascule automatiquement sur le
+  secours ; quand le principal se rétablit, l'état est réconcilié et il reprend la main — bascule et
+  retour automatiques, visibles dans le cockpit.</p>
+</section>
+
+<!-- 6 -->
+<section class="section">
+  <h2>6. TRANSFO — un produit réutilisable</h2>
+  <p>Resilience Guard transforme une somme d'outils en <b>une capacité packagée, déployable partout</b>.
+  L'intérêt « transformation » :</p>
   <ul>
-    <li>Le WAF bloque la charge utile (403) ; l'orchestrateur lance un <b>contrôle d'intégrité</b>
-    des données (comptes attendus, pas d'utilisateur suspect, soldes cohérents).</li>
-    <li>Restauration depuis une sauvegarde saine en cas d'altération (RPO = dernier snapshot).</li>
+    <li><b>Standardisation</b> : même socle de sécurité/observabilité sur toutes les apps de
+    l'organisation, au lieu d'intégrations hétérogènes.</li>
+    <li><b>Time-to-protect</b> : d'une app non protégée à une app supervisée + résiliente en une
+    commande, sans projet d'intégration.</li>
+    <li><b>Autonomie d'exploitation</b> : remédiation sans astreinte humaine + assistant IA qui
+    explique les incidents en langage clair.</li>
+    <li><b>Réversibilité</b> : overlay découplé, on l'ajoute ou on le retire sans toucher à l'app.</li>
   </ul>
-  <h3>Accès maîtrisés</h3>
-  <p>L'orchestrateur n'a <b>pas</b> d'accès god-mode aux conteneurs : il agit via une API
-  d'administration <b>scoped</b> (activer le bouclier, contrôler l'intégrité), protégée par un
-  token dédié — un point d'attention explicite du cahier des charges.</p>
-  <h3>Haute disponibilité : bascule (failover) &amp; retour (failback)</h3>
-  <p><b>Bascule automatique.</b> Si le principal devient injoignable (3 échecs de réplication
-  consécutifs, intervalle 2 s), le secours est <b>promu automatiquement</b> et sert le trafic ;
-  les clients basculent via nginx (upstream failover). Chaque paiement porte une <b>clé
-  d'idempotence</b> : une transaction en cours est <b>reprise exactement une fois</b> sur le
-  secours, sans double débit. Le cockpit de l'hôte reste lui-même vivant pendant la panne
-  (son nginx bascule aussi vers le secours).</p>
-  <p><b>Retour automatique.</b> Dès que le principal se répare, le secours lui <b>rejoue son
-  état</b> (réconciliation — aucune transaction perdue), puis repasse en mode réplication :
-  le principal reprend la main. Deux niveaux combinés : auto-réparation (remédiation) si le
-  principal peut se soigner, bascule si l'hôte crashe — c'est précisément ce que l'attaquant
-  provoque en lançant ses 7 vecteurs d'un coup pour faire tomber le principal.</p>
-
-  <h3>Scénario « jeu de hacker » : détection de compromission → blocage → bascule</h3>
-  <p>Une zone <b>« Reconnaissance / Opération »</b> ajoutée à la console attaquant transforme la
-  démo en jeu d'équilibre. L'API expose des chemins <b>exploitables par conception mais
-  instrumentés</b> (compteurs Prometheus <code>game_*</code>, journaux) : <b>reconnaissance</b>
-  (fuite progressive — comptes clients, soldes approximatifs, présence d'un livret) et
-  <b>retrait plafonné</b> (vol atomique <code>FOR UPDATE</code>, jamais négatif, plafonné par
-  coup et en cumulé). L'attaquant débloque des <b>astuces</b> de deux façons : à intervalle
-  (minuteur) <b>et</b> à chaque attaque réussie (fuite ou butin).</p>
-  <p>Le couple <b>détecteur ML + orchestrateur</b> surveille les retraits anormaux, le motif
-  d'énumération et l'anomalie de trafic. Dès qu'il détecte la compromission (butin trop élevé,
-  ou attaque trop forte pendant l'exploitation), l'IA <b>bloque l'attaquant</b> (cooldown de
-  plusieurs minutes, attaques refusées et affichées en compte à rebours), <b>bascule vers le
-  secours</b> (réutilisation du mécanisme HA ; en montage 2 PC, dégradé 503 du principal →
-  <code>proxy_next_upstream</code> nginx) et <b>restaure le butin</b> sur le compte cible
-  (intégrité / secours sain). Résultat clé : <b>si l'IA bascule à temps, l'argent volé ne
-  « gagne » pas</b>. Quand la menace retombe, retour automatique à la normale. L'attaquant doit
-  donc <b>doser</b> : jouer discret rapporte un petit butin ; forcer déclenche le blocage.</p>
 </section>
 
-<!-- 5. SÉCURITÉ -->
+<!-- 7 -->
 <section class="section">
-  <h2>5. Sécurité (défense)</h2>
+  <h2>7. Démonstration & résultats (vérifiés en local)</h2>
+  <p>Scénario type : on lance une app de démo, on pose le module devant (une commande), puis :</p>
   <table>
-    <tr><th>Dispositif</th><th>Rôle</th></tr>
-    <tr><td>WAF applicatif (auth + api)</td><td>Inspection des entrées (signatures OWASP SQLi/XSS) → 403 + métrique + log</td></tr>
-    <tr><td>Fonction SOC</td><td>Loki + Prometheus + vue SOC du cockpit (blocages WAF, état, intégrité)</td></tr>
-    <tr><td>Moindre privilège</td><td>Orchestrateur via API admin scoped ; clients internes via token dédié</td></tr>
-    <tr><td>Durcissement</td><td><code>no-new-privileges</code> sur les services ; DB non exposée ; cAdvisor sans port</td></tr>
-    <tr><td>Secrets</td><td>Chiffrés via SOPS + age ; aucun secret en clair dans le dépôt</td></tr>
-    <tr><td>Contrôle d'accès par rôle (banquier)</td><td>Rôle <code>banker</code> porté par le JWT ; endpoints <code>/bank/*</code> protégés (un client normal reçoit <b>403</b>, vérifié) ; le banquier est exclu de l'annuaire des clients</td></tr>
-    <tr><td>Continuité de service (haute dispo)</td><td>Failover automatique vers le secours + clés d'idempotence (reprise <i>exactly-once</i>) ; failback avec réconciliation → aucune transaction perdue</td></tr>
+    <tr><th>Étape</th><th>Observé</th></tr>
+    <tr><td>Trafic normal</td><td>Cockpit : KPI live (débit, latence, erreurs) ; détecteur <span class="ok">CLEAR</span></td></tr>
+    <tr><td>Requête d'injection SQL (ex. <code>' OR 1=1--</code>)</td><td><span class="ok">WAF 403</span> + <code>waf_blocked_total</code> incrémenté</td></tr>
+    <tr><td>Montée en charge / attaque</td><td>Score d'anomalie ↑ → orchestrateur active le bouclier, vérifie, journalise</td></tr>
+    <tr><td>Panne du principal</td><td><span class="ok">Bascule automatique</span> sur le secours (&lt; 8 s), retour auto au rétablissement</td></tr>
+    <tr><td>Question à l'assistant</td><td>Réponse en français citant les logs/erreurs réels (WAF, 403, bascules)</td></tr>
   </table>
-  <p class="muted">Détail : voir <code>SECURITE.md</code> dans le dépôt.</p>
+  <p class="muted">Vérifications réalisées en local avec Docker (passerelle sert l'app, /metrics
+  expose les compteurs, cockpit à jour, WAF bloque l'injection). Les builds front sont validés avant
+  déploiement.</p>
 </section>
 
-<!-- 6. ESSAIS -->
+<!-- 8 -->
 <section class="section">
-  <h2>6. Résultats des essais</h2>
-  <p>Une recette automatisée (<code>scripts/recette.sh</code>) rejoue la chaîne complète et
-  produit un rapport. Dernier passage : <span class="ok">15 OK / 0 KO</span>.</p>
-  <table>
-    <tr><th>Vérification</th><th>Résultat</th></tr>
-    <tr><td>Santé des 7 services clés</td><td class="ok">OK</td></tr>
-    <tr><td>Modèle ML entraîné</td><td class="ok">OK</td></tr>
-    <tr><td>Transaction nominale</td><td class="ok">OK</td></tr>
-    <tr><td>DoS → reprise autonome (RECOVERED) + bouclier</td><td class="ok">OK</td></tr>
-    <tr><td>Transaction réussie pendant l'attaque</td><td class="ok">OK</td></tr>
-    <tr><td>Injection SQL → contenue par le WAF</td><td class="ok">OK</td></tr>
-    <tr><td>Contrôle d'intégrité des données</td><td class="ok">OK</td></tr>
-    <tr><td>Transaction finale après incidents</td><td class="ok">OK</td></tr>
-  </table>
-  <p>Chaos engineering (<code>scripts/chaos.sh</code>) : arrêt brutal d'un conteneur →
-  reprise automatique vérifiée par canari (politique de redémarrage).</p>
-  <p>Recette haute disponibilité (<code>scripts/recette-ha.sh</code>) : crash du serveur
-  principal → bascule automatique du client sur le backup → <b>reprise de la transaction
-  en cours sans double débit</b> → nouveau paiement traité par le backup. <span class="ok">13 OK / 0 KO</span>.</p>
-  <p><b>Essai de continuité vérifié bout en bout.</b> État nominal (le PRINCIPAL sert) →
-  arrêt du principal → au bout d'environ <b>6–11 s</b> le SECOURS est promu et sert le trafic
-  → un crédit de 50 € effectué <b>pendant la panne</b> (routé vers le secours) fait passer le
-  solde de <b>787 € à 837 €</b> → redémarrage du principal → retour automatique (~15 s) : après
-  réconciliation, le solde lu sur le principal est bien <span class="ok">837 €</span> — les 50 €
-  réalisés pendant la panne ont survécu, <b>aucune transaction perdue</b>.</p>
-</section>
-
-<!-- 7. GOUVERNANCE -->
-<section class="section">
-  <h2>7. Gouvernance &amp; conformité</h2>
+  <h2>8. Gouvernance & conformité</h2>
   <h3>Analyse de risques (EBIOS RM) — synthèse</h3>
   <table>
-    <tr><th>Scénario</th><th>Gravité</th><th>Vraisemblance résiduelle</th><th>Niveau résiduel</th></tr>
-    <tr><td>DoS → indisponibilité</td><td>Critique</td><td>Faible (détecté + atténué auto)</td><td>Moyen</td></tr>
-    <tr><td>Injection → altération/fuite</td><td>Critique</td><td>Faible (bloqué WAF)</td><td>Faible-Moyen</td></tr>
-    <tr><td>Accès non autorisé</td><td>Grave</td><td>Faible</td><td>Faible</td></tr>
+    <tr><th>Risque</th><th>Impact</th><th>Mesure (apportée par le module)</th></tr>
+    <tr><td>Déni de service</td><td>Indisponibilité</td><td>Détection ML + bouclier de délestage + bascule HA</td></tr>
+    <tr><td>Injection (SQLi/XSS)</td><td>Compromission des données</td><td>WAF applicatif + contrôle d'intégrité</td></tr>
+    <tr><td>Panne d'un nœud</td><td>Interruption de service</td><td>Failover/retour automatiques, observabilité</td></tr>
+    <tr><td>Exploitation discrète</td><td>Vol / fuite</td><td>Suspicion par IP + blocage probabiliste isolé</td></tr>
   </table>
   <h3>PCA / PRA</h3>
-  <p>Services vitaux : paiement et authentification. <b>RTO</b> visé &lt; 30 s (mesuré ~15 s) ;
-  <b>RPO</b> nul pour la disponibilité (base persistante), = dernier snapshot pour une
-  compromission. Deux playbooks distincts, responsabilités définies (automate / opérateur /
-  équipe).</p>
+  <p>La haute disponibilité (secours + bascule/retour automatiques) et la remédiation zéro-touch
+  constituent un socle de continuité : le service se maintient et se rétablit sans intervention,
+  avec journalisation d'incident pour l'après-coup.</p>
   <h3>NIS2 / DORA</h3>
-  <p>Le prototype démontre : gestion des risques reliée à l'architecture, détection et réponse
-  aux incidents, continuité (reprise autonome), traçabilité. Non démontrables en 4 jours :
-  notification réglementaire, gouvernance organisationnelle, registre des tiers TIC, TLPT.</p>
+  <p>Le module adresse des exigences clés : détection et gestion des incidents, résilience
+  opérationnelle (bascule, reprise), journalisation et supervision, mesures techniques de protection
+  (WAF). Il industrialise ces contrôles de façon homogène et réutilisable.</p>
   <h3>Recommandations à la direction</h3>
   <ul>
-    <li>Industrialiser la reprise (haute disponibilité + WAF réseau) : meilleur rapport valeur/effort.</li>
-    <li>Formaliser la notification d'incident à partir de la traçabilité existante.</li>
-    <li>Planifier des tests de résilience réguliers (le dispositif d'attaque contrôlée existe déjà).</li>
-    <li>Décider sur des éléments vérifiables : RTO, taux de blocage WAF, score d'anomalie, succès canari.</li>
+    <li>Adopter le module comme <b>socle de sécurité/observabilité standard</b> devant les apps.</li>
+    <li>Brancher les alertes du cockpit sur l'astreinte ; conserver les logs centralisés (Loki).</li>
+    <li>Rejouer régulièrement les scénarios d'incident (attaque → remédiation → bascule).</li>
   </ul>
-  <p class="muted">Détail : <code>docs/gouvernance/</code> dans le dépôt.</p>
 </section>
 
-<!-- 8. CONTRIBUTIONS + LIMITES -->
+<!-- 9 -->
 <section class="section">
-  <h2>8. Contributions, limites &amp; suites</h2>
-  <h3>Contribution de chacun</h3>
+  <h2>9. Contributions, limites & suites</h2>
+  <h3>Contribution de l'équipe</h3>
   <table>
-    <tr><th>Membre</th><th>Domaine(s) assumé(s)</th><th>Contributions principales</th></tr>
-    <tr><td>Téo Debay</td><td>Développement</td><td>API paiement, auth, frontend, transferts</td></tr>
-    <tr><td>Hodari Bigwi</td><td>Infrastructure</td><td>Compose, observabilité, déploiement, HA</td></tr>
-    <tr><td>Timéo Quehen</td><td>IA / Data</td><td>Détecteur ML, assistant RAG</td></tr>
-    <tr><td>Théo Vambre</td><td>Cybersécurité</td><td>Attaques, WAF, SOC, secrets</td></tr>
-    <tr><td>Adrien Planquelle</td><td>Gouvernance</td><td>EBIOS, PCA/PRA, NIS2/DORA</td></tr>
+    <tr><th>Membre</th><th>Axe principal</th></tr>
+    <tr><td>Téo Debay</td><td>Architecture du module, passerelle, intégration</td></tr>
+    <tr><td>Timéo Quehen</td><td>Observabilité (Prometheus/Grafana/Loki), cockpit</td></tr>
+    <tr><td>Hodari Bigwi</td><td>Détection IA, orchestrateur de remédiation</td></tr>
+    <tr><td>Théo Vambre</td><td>Haute disponibilité, bascule/retour, infra</td></tr>
+    <tr><td>Adrien Planquelle</td><td>Sécurité (WAF), assistant RAG, démonstrateurs</td></tr>
   </table>
   <h3>Limites assumées</h3>
   <ul>
-    <li>Prototype mono-hôte : pas de haute disponibilité ni de reprise multi-site.</li>
-    <li>WAF à signatures : contournement possible par obfuscation (vs WAF réseau avec CRS).</li>
-    <li>Bouclier DoS applicatif : protège l'application, pas une saturation réseau amont.</li>
+    <li>Démonstrateur pédagogique : données et attaques fictives, labo isolé.</li>
+    <li>WAF à base de signatures (pas de WAF managé) ; modèle ML volontairement simple et explicable.</li>
+    <li>HA applicative (réconciliation d'état simple), pas un cluster de production.</li>
   </ul>
-  <h3>Ce que nous ferions différemment en contexte industriel</h3>
+  <h3>En contexte industriel</h3>
   <ul>
-    <li>WAF réseau (ModSecurity/Coraza) + blocage par IP/réputation.</li>
-    <li>Haute disponibilité (réplication DB, plusieurs nœuds) et sauvegardes testées.</li>
-    <li>Enrichissement du modèle (plus de features, ré-entraînement périodique).</li>
+    <li>Passerelle durcie (mTLS, rate-limiting fin), WAF enrichi, secrets gérés (Vault/SOPS).</li>
+    <li>Détection enrichie (features multiples, apprentissage continu supervisé).</li>
+    <li>HA orchestrée (Kubernetes) + stockage répliqué ; intégration SIEM/SOAR.</li>
   </ul>
-  <p class="muted">Code, configurations, scripts d'attaque et de ML, tests et README :
-  dépôt Git du projet (github.com/bigwihodari/Resilience-Alpha).</p>
+  <p class="muted">Projet pédagogique — dépôt github.com/bigwihodari/Resilience-Alpha ·
+  module : <code>module/README.md</code> · données et attaques fictives, limitées au labo.</p>
 </section>
 
 </body>
