@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS users (
     id            SERIAL PRIMARY KEY,
     username      VARCHAR(64) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
+    role          VARCHAR(16) NOT NULL DEFAULT 'client',  -- client | banker
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

@@ -13,7 +13,7 @@ import jwt
 from fastapi import FastAPI, HTTPException, Header, Body
 from pydantic import BaseModel
 from prometheus_client import Counter
-from sqlalchemy import create_engine, Integer, String, Numeric, ForeignKey, select
+from sqlalchemy import create_engine, Integer, String, Numeric, ForeignKey, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, Session
 from prometheus_fastapi_instrumentator import Instrumentator
 
@@ -23,6 +23,8 @@ JWT_ALG = "HS256"
 JWT_TTL_MIN = int(os.environ.get("JWT_TTL_MIN", "60"))
 DEMO_USER = os.environ.get("DEMO_USER", "alice")
 DEMO_PASSWORD = os.environ.get("DEMO_PASSWORD", "password123")
+BANKER_USER = os.environ.get("BANKER_USER", "banquier")
+BANKER_PASSWORD = os.environ.get("BANKER_PASSWORD", DEMO_PASSWORD)
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "orchestrator-admin-token")
 INTERNAL_TOKEN = os.environ.get("INTERNAL_TOKEN", "internal-trusted-token")
 
@@ -83,6 +85,7 @@ class User(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     username: Mapped[str] = mapped_column(String(64), unique=True)
     password_hash: Mapped[str] = mapped_column(String(255))
+    role: Mapped[str] = mapped_column(String(16), default="client")  # client | banker
 
 
 class Account(Base):
@@ -137,15 +140,24 @@ class Creds(BaseModel):
 @app.on_event("startup")
 def startup():
     wait_for_db()
-    # Les tables sont créées par db/init.sql ; on sème les comptes clients de démo.
-    seeds = [(DEMO_USER, DEMO_PASSWORD), ("bob", DEMO_PASSWORD)]
+    # Migration légère : rôle (compatible avec une base existante sans colonne role).
+    with engine().begin() as c:
+        c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(16) NOT NULL DEFAULT 'client'"))
+    # Les tables sont créées par db/init.sql ; on sème les comptes de démo.
+    # Clients (avec un compte de paiement) + un compte banquier (sans compte, rôle 'banker').
+    client_seeds = [(DEMO_USER, DEMO_PASSWORD), ("bob", DEMO_PASSWORD)]
     with Session(engine()) as s:
-        for username, pw in seeds:
+        for username, pw in client_seeds:
             if s.scalar(select(User).where(User.username == username)) is None:
-                u = User(username=username, password_hash=hash_pw(pw))
+                u = User(username=username, password_hash=hash_pw(pw), role="client")
                 s.add(u)
                 s.flush()
                 s.add(Account(user_id=u.id, balance=1000, currency="EUR"))
+        banker = s.scalar(select(User).where(User.username == BANKER_USER))
+        if banker is None:
+            s.add(User(username=BANKER_USER, password_hash=hash_pw(BANKER_PASSWORD), role="banker"))
+        else:
+            banker.role = "banker"  # garantit le rôle même sur une base déjà créée
         s.commit()
 
 
@@ -194,9 +206,10 @@ def login(c: Creds, x_internal_token: str = Header(default=None)):
         u = s.scalar(select(User).where(User.username == c.username))
         if u is None or not check_pw(c.password, u.password_hash):
             raise HTTPException(401, "invalid credentials")
+        role = u.role or "client"
     exp = dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=JWT_TTL_MIN)
-    token = jwt.encode({"sub": c.username, "exp": exp}, JWT_SECRET, algorithm=JWT_ALG)
-    return {"access_token": token, "token_type": "bearer"}
+    token = jwt.encode({"sub": c.username, "role": role, "exp": exp}, JWT_SECRET, algorithm=JWT_ALG)
+    return {"access_token": token, "token_type": "bearer", "role": role}
 
 
 Instrumentator().instrument(app).expose(app)

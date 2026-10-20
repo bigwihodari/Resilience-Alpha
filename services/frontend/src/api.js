@@ -9,6 +9,12 @@ export function setToken(t) {
 export function clearToken() {
   try { localStorage.removeItem(TOKEN_KEY); } catch { /* ignore */ }
 }
+// Rôle lu dans le JWT (payload base64) : 'banker' ou 'client'.
+export function getRole() {
+  const t = getToken();
+  if (!t) return null;
+  try { return JSON.parse(atob(t.split(".")[1])).role || "client"; } catch { return null; }
+}
 
 async function req(path, opts = {}) {
   const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
@@ -35,6 +41,15 @@ export const getAccount = () => req("/api/accounts/me");
 export const createTx = (amount, recipient) =>
   req("/api/transactions", { method: "POST", body: JSON.stringify({ amount, recipient }) });
 export const listTx = () => req("/api/transactions");
+
+// ---- Interface banquier (compte de rôle 'banker') ----
+export const bankAccounts = () => req("/api/bank/accounts");
+export const bankTransactions = (username = "") =>
+  req(`/api/bank/transactions${username ? `?username=${encodeURIComponent(username)}` : ""}`);
+export const bankCredit = (username, amount, note) =>
+  req("/api/bank/credit", { method: "POST", body: JSON.stringify({ username, amount, note }) });
+export const bankDebit = (username, amount, note) =>
+  req("/api/bank/debit", { method: "POST", body: JSON.stringify({ username, amount, note }) });
 
 // ---- Prometheus (via proxy nginx /prom) : graphes intégrés au cockpit ----
 export async function promInstant(query) {

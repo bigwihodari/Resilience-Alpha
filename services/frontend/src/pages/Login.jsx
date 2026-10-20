@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { login, setToken } from "../api.js";
+import { login, setToken, getRole } from "../api.js";
 
 export default function Login() {
   const [username, setUsername] = useState("alice");
@@ -16,7 +16,7 @@ export default function Login() {
     try {
       const r = await login(username, password);
       setToken(r.access_token);
-      nav("/cockpit");
+      nav(getRole() === "banker" ? "/banque" : "/cockpit");
     } catch (e) {
       setErr(e.message || "Échec de connexion");
     } finally {
@@ -50,7 +50,9 @@ export default function Login() {
         >
           {loading ? "Connexion…" : "Se connecter"}
         </button>
-        <p className="text-xs text-ink/40 mt-4 text-center">Démo : alice / password123</p>
+        <p className="text-xs text-ink/40 mt-4 text-center">
+          Démo client : alice / password123<br />Banquier : banquier / password123
+        </p>
       </form>
     </div>
   );

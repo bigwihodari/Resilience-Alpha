@@ -27,6 +27,8 @@ services:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-resilience}:${POSTGRES_PASSWORD:-resilience}@db:5432/${POSTGRES_DB:-resilience}
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
       DEMO_PASSWORD: ${DEMO_PASSWORD:-password123}
+      BANKER_USER: ${BANKER_USER:-banquier}
+      BANKER_PASSWORD: ${BANKER_PASSWORD:-password123}
       ADMIN_TOKEN: ${ADMIN_TOKEN:-orchestrator-admin-token}
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-internal-trusted-token}
     depends_on:

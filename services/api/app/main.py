@@ -69,6 +69,7 @@ class User(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     username: Mapped[str] = mapped_column(String(64), unique=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=True)
+    role: Mapped[str] = mapped_column(String(16), default="client")  # client | banker
 
 
 class Account(Base):
@@ -115,15 +116,25 @@ def wait_for_db(retries: int = 30, delay: float = 2.0):
     raise RuntimeError(f"DB unreachable: {last}")
 
 
-def current_user(authorization: str = Header(default=None)) -> str:
+def current_claims(authorization: str = Header(default=None)) -> dict:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "missing bearer token")
     token = authorization.split(" ", 1)[1]
     try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+        return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
     except Exception:  # noqa: BLE001
         raise HTTPException(401, "invalid token")
-    return payload["sub"]
+
+
+def current_user(claims: dict = Depends(current_claims)) -> str:
+    return claims["sub"]
+
+
+def require_banker(claims: dict = Depends(current_claims)) -> str:
+    """Autorise uniquement un jeton de rôle 'banker' (interface banquier)."""
+    if claims.get("role") != "banker":
+        raise HTTPException(403, "réservé au compte banquier")
+    return claims["sub"]
 
 
 app = FastAPI(title="Resilience-Alpha — Payment API")
@@ -193,6 +204,7 @@ def startup():
     with engine().begin() as c:
         c.execute(text("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS idem_key VARCHAR(64)"))
         c.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_tx_idem ON transactions(idem_key) WHERE idem_key IS NOT NULL"))
+        c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(16) NOT NULL DEFAULT 'client'"))
     if ROLE == "backup" and PEER_API_URL:
         threading.Thread(target=replicate_loop, daemon=True).start()
 
@@ -277,7 +289,7 @@ def create_transaction(body: TxIn, user: str = Depends(current_user)):
 def list_users(q: str = "", user: str = Depends(current_user)):
     """Annuaire : clients enregistrés disponibles (recherche par nom)."""
     with Session(engine()) as s:
-        stmt = select(User.username).where(User.username != user)
+        stmt = select(User.username).where(User.username != user, User.role != "banker")
         if q:
             stmt = stmt.where(User.username.ilike(f"%{q}%"))
         rows = s.scalars(stmt.order_by(User.username).limit(20)).all()
@@ -304,6 +316,94 @@ def list_transactions(user: str = Depends(current_user)):
             }
             for r in rows
         ]
+
+
+# ---------------- Interface banquier (rôle 'banker') ----------------
+class BankOp(BaseModel):
+    username: str                 # client visé
+    amount: float                 # montant (> 0)
+    note: str | None = None       # libellé optionnel (motif)
+
+
+@app.get("/bank/accounts")
+def bank_accounts(banker: str = Depends(require_banker)):
+    """Tous les comptes clients avec leur solde (vue banquier)."""
+    with Session(engine()) as s:
+        rows = s.execute(
+            select(User.username, Account.balance, Account.currency)
+            .join(Account, Account.user_id == User.id)
+            .where(User.role != "banker")
+            .order_by(User.username)
+        ).all()
+        total = sum(float(r.balance) for r in rows)
+    return {
+        "accounts": [
+            {"username": r.username, "balance": float(r.balance), "currency": r.currency}
+            for r in rows
+        ],
+        "count": len(rows),
+        "total_balance": round(total, 2),
+    }
+
+
+@app.get("/bank/transactions")
+def bank_transactions(username: str = "", limit: int = 100, banker: str = Depends(require_banker)):
+    """Historique global (ou filtré par client) — mouvements crédit/débit."""
+    with Session(engine()) as s:
+        stmt = (
+            select(Transaction, User.username)
+            .join(Account, Account.id == Transaction.account_id)
+            .join(User, User.id == Account.user_id)
+            .order_by(Transaction.id.desc())
+        )
+        if username:
+            stmt = stmt.where(User.username == username)
+        rows = s.execute(stmt.limit(max(1, min(limit, 500)))).all()
+        return [
+            {
+                "id": t.id, "username": uname, "amount": float(t.amount), "type": t.type,
+                "recipient": t.recipient, "status": t.status,
+                "created_at": t.created_at.isoformat() if t.created_at else None,
+            }
+            for t, uname in rows
+        ]
+
+
+def _bank_apply(username: str, amount: float, op: str, note: str | None, banker: str):
+    """Crédit (dépôt) ou débit (retrait) banquier sur le compte d'un client."""
+    waf_scan("api/bank", username=username, note=note or "")
+    if amount <= 0:
+        raise HTTPException(400, "le montant doit être positif")
+    with Session(engine()) as s:
+        u = s.scalar(select(User).where(User.username == username))
+        if u is None or (u.role or "client") == "banker":
+            raise HTTPException(404, "client introuvable")
+        acc = s.scalar(select(Account).where(Account.user_id == u.id))
+        if acc is None:
+            raise HTTPException(404, "compte introuvable")
+        if op == "debit" and float(acc.balance) < amount:
+            raise HTTPException(402, "solde insuffisant")
+        label = note or ("BANQUE (dépôt)" if op == "credit" else "BANQUE (retrait)")
+        acc.balance = float(acc.balance) + (amount if op == "credit" else -amount)
+        s.add(Transaction(account_id=acc.id, amount=amount, type=op,
+                          recipient=label, status="completed"))
+        s.commit()
+        new_balance = float(acc.balance)
+    # Temps réel : prévient tous les écrans (client concerné + dashboard banquier).
+    ws_manager.publish({"type": "tx", "from": banker if op == "debit" else "BANQUE",
+                        "to": username, "amount": amount, "op": op})
+    return {"status": "completed", "username": username, "op": op,
+            "amount": amount, "new_balance": new_balance}
+
+
+@app.post("/bank/credit")
+def bank_credit(body: BankOp, banker: str = Depends(require_banker)):
+    return _bank_apply(body.username, body.amount, "credit", body.note, banker)
+
+
+@app.post("/bank/debit")
+def bank_debit(body: BankOp, banker: str = Depends(require_banker)):
+    return _bank_apply(body.username, body.amount, "debit", body.note, banker)
 
 
 @app.get("/admin/integrity")
