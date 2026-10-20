@@ -1,10 +1,36 @@
-@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&display=swap');
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+:root { color-scheme: light; }
+html { scroll-behavior: smooth; }
+
 body {
   font-family: Montserrat, system-ui, sans-serif;
-  background: #E4E6F3;
   color: #261E48;
+  min-height: 100vh;
+  background: radial-gradient(1200px 600px at 80% -10%, #EEF0F8 0%, #E4E6F3 45%, #DEE1F2 100%) fixed;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* Accessibilité : anneau de focus clavier */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 3px solid #4B3FA6;
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+
+/* Barres de défilement discrètes */
+* { scrollbar-width: thin; scrollbar-color: #A1A6D4 transparent; }
+*::-webkit-scrollbar { width: 9px; height: 9px; }
+*::-webkit-scrollbar-thumb { background: #A1A6D4; border-radius: 999px; }
+*::-webkit-scrollbar-track { background: transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }

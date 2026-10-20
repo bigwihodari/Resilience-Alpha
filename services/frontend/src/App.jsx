@@ -21,12 +21,16 @@ function NavBar() {
   const loc = useLocation();
   if (loc.pathname === "/") return null;
   const isBanker = getRole() === "banker";
-  const link = (to, label) => (
-    <Link className="text-sm hover:text-lav" to={to}>{label}</Link>
-  );
+  const link = (to, label) => {
+    const on = loc.pathname === to;
+    return (
+      <Link to={to} aria-current={on ? "page" : undefined}
+        className={`text-sm px-2.5 py-1.5 rounded-lg transition ${on ? "bg-white/15 text-white font-semibold" : "text-white/80 hover:text-white hover:bg-white/10"}`}>{label}</Link>
+    );
+  };
   return (
-    <nav className="bg-ink text-white px-5 py-3 flex items-center gap-6 shadow">
-      <Link to={isBanker ? "/banque" : "/cockpit"} className="font-extrabold tracking-tight">RESILIENCE-ALPHA</Link>
+    <nav className="sticky top-0 z-40 bg-ink text-white px-5 py-3 flex items-center gap-2 shadow-lg">
+      <Link to={isBanker ? "/banque" : "/cockpit"} className="font-extrabold tracking-tight mr-2">RESILIENCE-ALPHA</Link>
       {isBanker && link("/banque", "Banque")}
       {isBanker && link("/jeu", "Jeu")}
       {link("/cockpit", "Cockpit")}
