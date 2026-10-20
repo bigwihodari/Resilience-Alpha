@@ -36,8 +36,16 @@ REPL_TOKEN = os.environ.get("REPL_TOKEN", "repl-secret")
 REPL_INTERVAL = float(os.environ.get("REPL_INTERVAL", "2"))
 HA_NAME = os.environ.get("HA_NAME", "PRINCIPAL" if ROLE == "primary" else "SECOURS")
 # Livret d'epargne : taux applique toutes les SAVINGS_INTERVAL secondes.
+# Modifiable EN DIRECT par le banquier (savings_cfg) ; ces env sont les valeurs de depart.
 SAVINGS_RATE = float(os.environ.get("SAVINGS_RATE", "0.01"))       # 1% par cycle (demo)
 SAVINGS_INTERVAL = float(os.environ.get("SAVINGS_INTERVAL", "30"))  # secondes
+savings_cfg = {"rate": SAVINGS_RATE, "interval": SAVINGS_INTERVAL}
+
+# Destinataires externes autorises (marchands/canari). Un paiement vers un nom
+# qui n'est NI un client connu NI un marchand de cette liste est refuse (404) :
+# evite les "paiements vers des comptes inexistants".
+MERCHANTS = set(m.strip() for m in os.environ.get(
+    "MERCHANTS", "MERCHANT-01,MERCHANT-02,MERCHANT-03,SHOP-42,CANARY").split(",") if m.strip())
 FAIL_PROMOTE = int(os.environ.get("FAIL_PROMOTE", "3"))       # échecs avant promotion du secours
 FAILBACK_CONFIRM = int(os.environ.get("FAILBACK_CONFIRM", "3"))  # cycles OK avant retour au principal
 repl_state = {"role": ROLE, "name": HA_NAME, "promoted": ROLE == "primary", "peer": PEER_API_URL,
@@ -308,7 +316,7 @@ def my_account(user: str = Depends(current_user)):
         if acc is None:
             raise HTTPException(404, "account not found")
         return {"username": user, "balance": float(acc.balance), "savings": float(acc.savings),
-                "savings_rate": SAVINGS_RATE, "savings_interval": SAVINGS_INTERVAL,
+                "savings_rate": savings_cfg["rate"], "savings_interval": savings_cfg["interval"],
                 "currency": acc.currency}
 
 
@@ -336,10 +344,15 @@ def create_transaction(body: TxIn, user: str = Depends(current_user)):
                         "recipient": prior.recipient, "new_balance": float(acc.balance),
                         "resumed": True}
 
-        # Destinataire : CLIENT connu -> transfert (crédit) ; sinon marchand externe.
+        # Destinataire : CLIENT connu -> transfert (crédit) ; marchand autorisé -> externe ;
+        # sinon REFUS (pas de paiement vers un compte inexistant).
         rec_user = s.scalar(select(User).where(User.username == body.recipient)) if body.recipient else None
         if rec_user is not None and rec_user.id == u.id:
             raise HTTPException(400, "cannot pay yourself")
+        if body.recipient and rec_user is None and body.recipient not in MERCHANTS:
+            raise HTTPException(404, "destinataire introuvable")
+        if rec_user is not None and (rec_user.role or "client") != "client":
+            raise HTTPException(404, "destinataire introuvable")
         if float(acc.balance) < body.amount:
             raise HTTPException(402, "insufficient funds")
 
@@ -420,7 +433,7 @@ def get_savings(user: str = Depends(current_user)):
         if acc is None:
             raise HTTPException(404, "account not found")
         return {"balance": float(acc.balance), "savings": float(acc.savings),
-                "rate": SAVINGS_RATE, "interval": SAVINGS_INTERVAL}
+                "rate": savings_cfg["rate"], "interval": savings_cfg["interval"]}
 
 
 def _savings_move(user: str, amount: float, op: str):
@@ -462,22 +475,24 @@ def savings_withdraw(body: SavingsOp, user: str = Depends(current_user)):
 
 
 def savings_interest_loop():
-    """Ajoute les intérêts du livret toutes les SAVINGS_INTERVAL s (noeud autoritaire)."""
+    """Ajoute les intérêts du livret toutes les N s (N = savings_cfg['interval'],
+    taux = savings_cfg['rate']) sur le noeud autoritaire. Paramètres réglables EN
+    DIRECT par le banquier. On ne crée PAS de ligne d'historique par tick (sinon
+    l'historique est spammé) : le livret grossit, c'est visible sur la carte."""
     while True:
-        time.sleep(SAVINGS_INTERVAL)
-        if not repl_state.get("promoted") or SAVINGS_RATE <= 0:
+        time.sleep(max(1.0, float(savings_cfg["interval"])))
+        rate = float(savings_cfg["rate"])
+        if not repl_state.get("promoted") or rate <= 0:
             continue
         try:
             touched = False
             with Session(engine()) as s:
                 accts = s.scalars(select(Account).where(Account.savings > 0)).all()
                 for a in accts:
-                    interest = round(float(a.savings) * SAVINGS_RATE, 2)
+                    interest = round(float(a.savings) * rate, 2)
                     if interest <= 0:
                         continue
                     a.savings = float(a.savings) + interest
-                    s.add(Transaction(account_id=a.id, amount=interest, type="credit",
-                                      recipient="LIVRET (intérêts)", status="completed"))
                     touched = True
                 s.commit()
             if touched:
@@ -620,6 +635,34 @@ def bank_credit(body: BankOp, banker: str = Depends(require_banker)):
 @app.post("/bank/debit")
 def bank_debit(body: BankOp, banker: str = Depends(require_banker)):
     return _bank_apply(body.username, body.amount, "debit", body.note, banker)
+
+
+class SavingsCfgIn(BaseModel):
+    rate: float | None = None       # taux par cycle (ex. 0.01 = 1%)
+    interval: float | None = None   # secondes entre deux versements d'intérêts
+
+
+@app.get("/bank/savings-config")
+def bank_savings_config(banker: str = Depends(require_banker)):
+    """Config du livret (taux + intervalle), pilotée par le banquier."""
+    return {"rate": savings_cfg["rate"], "interval": savings_cfg["interval"],
+            "rate_pct": round(savings_cfg["rate"] * 100, 3)}
+
+
+@app.post("/bank/savings-config")
+def bank_set_savings_config(body: SavingsCfgIn, banker: str = Depends(require_banker)):
+    """Règle EN DIRECT le taux et/ou l'intervalle du livret (bornes raisonnables)."""
+    if body.rate is not None:
+        if not (0 <= body.rate <= 0.5):
+            raise HTTPException(400, "taux hors bornes (0 à 0.5, soit 0–50% par cycle)")
+        savings_cfg["rate"] = round(float(body.rate), 4)
+    if body.interval is not None:
+        if not (5 <= body.interval <= 3600):
+            raise HTTPException(400, "intervalle hors bornes (5 à 3600 s)")
+        savings_cfg["interval"] = float(body.interval)
+    ws_manager.publish({"type": "tx", "from": "LIVRET", "to": "", "amount": 0, "op": "config"})
+    return {"rate": savings_cfg["rate"], "interval": savings_cfg["interval"],
+            "rate_pct": round(savings_cfg["rate"] * 100, 3)}
 
 
 @app.get("/admin/integrity")

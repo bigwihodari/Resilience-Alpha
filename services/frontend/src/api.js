@@ -50,6 +50,10 @@ export const bankCredit = (username, amount, note) =>
   req("/api/bank/credit", { method: "POST", body: JSON.stringify({ username, amount, note }) });
 export const bankDebit = (username, amount, note) =>
   req("/api/bank/debit", { method: "POST", body: JSON.stringify({ username, amount, note }) });
+// Config du livret d'epargne (taux + intervalle), pilotee par le banquier.
+export const bankSavingsConfig = () => req("/api/bank/savings-config");
+export const setBankSavingsConfig = (rate, interval) =>
+  req("/api/bank/savings-config", { method: "POST", body: JSON.stringify({ rate, interval }) });
 
 // ---- Prometheus (via proxy nginx /prom) : graphes intégrés au cockpit ----
 export async function promInstant(query) {

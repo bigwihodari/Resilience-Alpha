@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   bankAccounts, bankTransactions, bankCredit, bankDebit,
+  bankSavingsConfig, setBankSavingsConfig,
 } from "../api.js";
 
 const euro = (n) => `${Number(n).toLocaleString("fr-FR", { minimumFractionDigits: 2 })} €`;
@@ -14,12 +15,37 @@ export default function Banker() {
   const [msg, setMsg] = useState(null);
   const [busy, setBusy] = useState(false);
   const [live, setLive] = useState(false);
+  // Reglages du livret d'epargne (taux + intervalle)
+  const [cfg, setCfg] = useState({ rate: 0, interval: 30 });
+  const [ratePct, setRatePct] = useState("1");
+  const [interval, setIntervalS] = useState("30");
+  const [cfgMsg, setCfgMsg] = useState(null);
+  const [cfgBusy, setCfgBusy] = useState(false);
   const selectedRef = useRef(null);
   selectedRef.current = selected;
 
   async function refreshAccounts() {
     try { setData(await bankAccounts()); }
     catch (e) { setMsg({ type: "err", text: e.message }); }
+  }
+  async function loadCfg() {
+    try {
+      const c = await bankSavingsConfig();
+      setCfg(c); setRatePct(String(+(c.rate * 100).toFixed(3))); setIntervalS(String(c.interval));
+    } catch { /* */ }
+  }
+  async function saveCfg() {
+    const rate = parseFloat(ratePct) / 100;
+    const iv = parseFloat(interval);
+    if (!Number.isFinite(rate) || rate < 0 || rate > 0.5) { setCfgMsg({ type: "err", text: "Taux 0 à 50 %." }); return; }
+    if (!Number.isFinite(iv) || iv < 5 || iv > 3600) { setCfgMsg({ type: "err", text: "Intervalle 5 à 3600 s." }); return; }
+    setCfgBusy(true); setCfgMsg(null);
+    try {
+      const c = await setBankSavingsConfig(rate, iv);
+      setCfg(c);
+      setCfgMsg({ type: "ok", text: `Livret : +${(c.rate * 100).toFixed(2)} % toutes les ${c.interval} s` });
+    } catch (e) { setCfgMsg({ type: "err", text: e.message }); }
+    finally { setCfgBusy(false); }
   }
   async function refreshHistory(username) {
     const u = username ?? selectedRef.current;
@@ -30,6 +56,7 @@ export default function Banker() {
 
   useEffect(() => {
     refreshAccounts();
+    loadCfg();
     // Temps réel : chaque mouvement (paiement client ou opération banquier)
     // rafraîchit la liste des comptes et l'historique affiché — sans refresh manuel.
     let ws, stopped = false, retry;
@@ -110,6 +137,33 @@ export default function Banker() {
           {msg.text}
         </div>
       )}
+
+      {/* Reglages du livret d'epargne (banquier) */}
+      <div className="bg-white rounded-2xl shadow p-5 mb-6">
+        <div className="flex flex-wrap items-end gap-4">
+          <div>
+            <div className="font-bold text-ink">Livret d'épargne — réglages</div>
+            <div className="text-xs text-ink/50">Actuel : +{(cfg.rate * 100).toFixed(2)} % toutes les {cfg.interval} s</div>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-ink/60 mb-1">Taux par cycle (%)</label>
+            <input type="number" min="0" max="50" step="0.1" value={ratePct}
+              onChange={(e) => setRatePct(e.target.value)}
+              className="w-28 border border-lav rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500" />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-ink/60 mb-1">Intervalle (s)</label>
+            <input type="number" min="5" max="3600" step="1" value={interval}
+              onChange={(e) => setIntervalS(e.target.value)}
+              className="w-28 border border-lav rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500" />
+          </div>
+          <button disabled={cfgBusy} onClick={saveCfg}
+            className="bg-green-600 text-white font-semibold px-4 py-2 rounded-lg hover:bg-green-700 transition disabled:opacity-40">
+            Appliquer
+          </button>
+          {cfgMsg && <span className={`text-sm ${cfgMsg.type === "ok" ? "text-green-700" : "text-red-600"}`}>{cfgMsg.text}</span>}
+        </div>
+      </div>
 
       <div className="grid md:grid-cols-5 gap-6">
         {/* Liste des comptes */}
