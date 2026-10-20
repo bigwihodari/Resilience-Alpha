@@ -68,6 +68,8 @@ CREATE TABLE IF NOT EXISTS auctions (
     created_by  VARCHAR(64) NOT NULL,
     winner      VARCHAR(64),
     winning_bid NUMERIC(14,2),
+    phish       INTEGER NOT NULL DEFAULT 0,            -- P5 : fausse enchere (phishing)
+    beneficiary VARCHAR(64),                           -- attaquant qui empoche la mise
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
