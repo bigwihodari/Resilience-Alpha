@@ -108,7 +108,27 @@
   .cooldown .cdt{font-size:48px;font-weight:900;color:#fff;font-variant-numeric:tabular-nums}
   .cooldown .cdsub{font-size:13px;color:var(--muted);max-width:420px}
   .hidden{display:none}
-  @media(max-width:760px){.gamegrid{grid-template-columns:1fr}.gkpis{grid-template-columns:repeat(2,1fr)}}
+  /* scoreboard butin (bien visible) */
+  .scoreboard{display:flex;gap:12px;align-items:stretch;margin:4px 0 14px;flex-wrap:wrap}
+  .score{flex:1;min-width:150px;border:1px solid var(--line);border-radius:14px;padding:14px 16px;text-align:center;
+    background:linear-gradient(135deg,#1a1033,#2a1a4a)}
+  .score .sl{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+  .score .sv{font-size:34px;font-weight:900;color:#fff;font-variant-numeric:tabular-nums;line-height:1.1;margin-top:4px}
+  .score.main{background:linear-gradient(135deg,#3a0f14,#5a1620);border-color:var(--red)}
+  .score.main .sv{color:var(--red2);text-shadow:0 0 18px rgba(229,72,77,.45)}
+  .score.exf .sv{color:var(--green);font-size:27px}
+  .score.neu .sv{color:var(--amber);font-size:27px}
+  /* sélecteur de cible */
+  .targetbox{display:flex;gap:8px;flex-wrap:wrap;align-items:center;background:#11142a;border:1px solid var(--line);
+    border-radius:10px;padding:10px;margin-bottom:12px}
+  .targetbox .tlabel{font-size:12px;color:var(--muted)}
+  .targetbox .cur{font-weight:800;color:var(--red2)}
+  .targetbox select,.targetbox input{flex:1;min-width:110px;background:#0E1020;border:1px solid var(--line);
+    color:var(--txt);border-radius:8px;padding:8px}
+  .targetbox button{flex:0 0 auto;background:#2a2f4a;color:var(--txt);border:0;border-radius:8px;padding:8px 12px;font-weight:700;cursor:pointer}
+  .targetbox button:hover{background:#363c5e}
+  @media(max-width:760px){.gamegrid{grid-template-columns:1fr}.gkpis{grid-template-columns:repeat(2,1fr)}
+    .score .sv{font-size:28px}}
 </style>
 </head>
 <body>
@@ -170,15 +190,31 @@
       <div class="cdt" id="cdtime">--:--</div>
       <div class="cdsub" id="cdreason">Tes attaques sont refusées. L'IA a basculé sur le secours et neutralisé ton butin.</div>
     </div>
-    <h2>🎯 Reconnaissance / Opération <span class="note" style="margin:0;text-transform:none;letter-spacing:0">— joue discret pour voler sans te faire repérer</span></h2>
+    <h2>🎯 Reconnaissance / Opération
+      <span class="note" style="margin:0;text-transform:none;letter-spacing:0">— joue discret pour voler sans te faire repérer ·</span>
+      <a href="/guide" target="_blank" rel="noreferrer" style="font-size:12px;color:var(--accent);text-transform:none;letter-spacing:0">📖 comment ça marche ?</a>
+    </h2>
+    <!-- Scoreboard butin (bien visible) -->
+    <div class="scoreboard">
+      <div class="score main"><div class="sl">💰 Butin détenu</div><div class="sv" id="sb-loot">0 €</div></div>
+      <div class="score exf"><div class="sl">Exfiltré (cumul)</div><div class="sv" id="sb-exf">0 €</div></div>
+      <div class="score neu"><div class="sl">Neutralisé par l'IA</div><div class="sv" id="sb-neu">0 €</div></div>
+    </div>
     <div class="neubanner hidden" id="neubanner"></div>
     <div class="gamegrid">
       <div>
+        <!-- Sélecteur de cible -->
+        <div class="targetbox">
+          <span class="tlabel">Cible :</span> <span class="cur" id="tg-cur">—</span>
+          <select id="tg-sel"><option value="">— cibles découvertes —</option></select>
+          <input id="tg-input" placeholder="ou saisir un nom" />
+          <button id="tg-set">🎯 Changer de cible</button>
+        </div>
         <div class="gkpis">
-          <div class="gkpi"><div class="n" id="g-loot">0€</div><div class="l">butin détenu</div></div>
-          <div class="gkpi"><div class="n warn" id="g-neu">0€</div><div class="l">butin neutralisé</div></div>
           <div class="gkpi"><div class="n" id="g-recon" style="color:var(--txt)">0</div><div class="l">sondes</div></div>
           <div class="gkpi"><div class="n" id="g-heist" style="color:var(--txt)">0</div><div class="l">retraits</div></div>
+          <div class="gkpi"><div class="n" id="g-capleft" style="color:var(--green)">0€</div><div class="l">reste à voler</div></div>
+          <div class="gkpi"><div class="n" id="g-ready" style="color:var(--amber);font-size:16px">—</div><div class="l">statut</div></div>
         </div>
         <div class="gactions">
           <button class="gbtn recon" id="btn-recon">🔍 SONDER la cible (reconnaissance)</button>
@@ -352,21 +388,46 @@ $("btn-heist").onclick = async () => {
     body: JSON.stringify({amount:amt, source:src})}); } catch(e){}
   pollGame();
 };
+$("tg-set").onclick = async () => {
+  const name = ($("tg-input").value || $("tg-sel").value || "").trim();
+  if (!name) return;
+  $("tg-set").disabled = true;
+  try { await fetch("/api/game/target",{method:"POST",headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({username:name})}); } catch(e){}
+  $("tg-input").value = "";
+  $("tg-set").disabled = false;
+  pollGame();
+};
 
 const kindClass = { success:"success", error:"error", alert:"error", action:"info", info:"info" };
 
+let tgDiscovered = "";   // signature de la liste découverte (rebuild dropdown si change)
 function renderGame(s){
   const t = s.target || {};
-  $("g-loot").textContent  = (t.loot||0).toFixed(0)+"€";
-  $("g-neu").textContent   = (t.loot_neutralized||0).toFixed(0)+"€";
-  $("g-recon").textContent = t.recon_count||0;
-  $("g-heist").textContent = t.heist_count||0;
-
-  // Caps / état recon
+  // Scoreboard butin
+  $("sb-loot").textContent = (t.loot||0).toFixed(0)+" €";
+  $("sb-exf").textContent  = (t.exfiltrated_total||0).toFixed(0)+" €";
+  $("sb-neu").textContent  = (t.loot_neutralized||0).toFixed(0)+" €";
+  // Tuiles
   const need = t.recon_needed||0, done = t.recon_count||0;
+  $("g-recon").textContent  = done;
+  $("g-heist").textContent  = t.heist_count||0;
+  $("g-capleft").textContent = (t.loot_cap_remaining||0).toFixed(0)+"€";
+  $("g-ready").textContent  = (done>=need) ? "prêt à voler" : ("recon "+done+"/"+need);
+
+  // Sélecteur de cible
+  $("tg-cur").textContent = t.victim || "?";
+  const disc = t.discovered || [];
+  const sig = disc.join(",");
+  if (sig !== tgDiscovered){
+    tgDiscovered = sig;
+    const sel = $("tg-sel");
+    sel.innerHTML = '<option value="">— cibles découvertes —</option>'
+      + disc.map(n=>'<option value="'+n+'">'+n+'</option>').join("");
+  }
+
   $("g-caps").innerHTML =
-    "Cible : <b style='color:var(--red2)'>"+(t.victim||"?")+"</b> · "
-    + "plafond/retrait "+(t.heist_max||0).toFixed(0)+"€ · butin max "+(t.loot_cap||0).toFixed(0)+"€ · "
+    "plafond/retrait "+(t.heist_max||0).toFixed(0)+"€ · butin max "+(t.loot_cap||0).toFixed(0)+"€ · "
     + "reste "+(t.loot_cap_remaining||0).toFixed(0)+"€<br>"
     + "reconnaissance : "+done+"/"+need+(done>=need?" ✓ (vol possible)":" (sonde encore pour voler)");
 

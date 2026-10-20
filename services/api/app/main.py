@@ -71,9 +71,11 @@ game_state = {
     "victim": GAME_VICTIM,
     "loot": 0.0,              # butin courant détenu par l'attaquant (non neutralisé)
     "loot_neutralized": 0.0,  # butin repris par la défense (claw-back / intégrité)
+    "exfiltrated_total": 0.0, # cumul exfiltré sur toute la partie (jamais remis à 0 sauf reset)
     "recon_count": 0,
     "heist_count": 0,
     "intel": [],              # infos révélées progressivement (fuite)
+    "discovered": [],         # comptes clients découverts par la recon (sélecteur de cible)
     "blocked_until": 0.0,     # epoch ; > now => attaquant bloqué (cooldown)
     "block_reason": "",
     "heist_max": GAME_HEIST_MAX,
@@ -722,6 +724,30 @@ def game_state_public():
     return _game_public()
 
 
+class TargetIn(BaseModel):
+    username: str
+
+
+@app.post("/game/target")
+def game_target(body: TargetIn):
+    """Choix de la CIBLE courante (l'attaquant vise qui il veut). On vérifie que
+    c'est bien un client de rôle 'client'. Changer de cible repart d'une recon
+    vierge (les infos fuitées valaient pour l'ancienne cible) ; le butin est conservé."""
+    name = (body.username or "").strip()
+    with Session(engine()) as s:
+        u = s.scalar(select(User).where(User.username == name))
+        if u is None or (u.role or "client") != "client":
+            raise HTTPException(400, "cible invalide — choisir un compte client existant")
+    with game_lock:
+        changed = name != game_state["victim"]
+        game_state["victim"] = name
+        if changed:
+            game_state["recon_count"] = 0
+            game_state["intel"] = []
+    print(f"[GAME] TARGET -> {name}", flush=True)
+    return {"ok": True, "victim": name, **_game_public()}
+
+
 @app.post("/game/recon")
 def game_recon():
     """Sonde de reconnaissance : fuite progressive d'infos sur la cible (par
@@ -742,6 +768,7 @@ def game_recon():
         game_state["recon_count"] += 1
         step = game_state["recon_count"]
         if step == 1:
+            game_state["discovered"] = [r.username for r in clients]
             names = ", ".join(r.username for r in clients[:6]) or "aucun"
             item = f"Annuaire exposé : {len(clients)} comptes clients détectés ({names})."
         elif step == 2 and vrow is not None:
@@ -807,6 +834,7 @@ def game_heist(body: HeistIn):
         s.commit()
     with game_lock:
         game_state["loot"] = round(game_state["loot"] + stolen, 2)
+        game_state["exfiltrated_total"] = round(game_state["exfiltrated_total"] + stolen, 2)
         game_state["heist_count"] += 1
         loot = game_state["loot"]
     GAME_HEIST.inc()
@@ -862,8 +890,9 @@ def game_reset(x_admin_token: str = Header(default=None)):
     if x_admin_token != ADMIN_TOKEN:
         raise HTTPException(403, "forbidden")
     with game_lock:
-        game_state.update({"loot": 0.0, "loot_neutralized": 0.0, "recon_count": 0,
-                           "heist_count": 0, "intel": [], "blocked_until": 0.0, "block_reason": ""})
+        game_state.update({"loot": 0.0, "loot_neutralized": 0.0, "exfiltrated_total": 0.0,
+                           "recon_count": 0, "heist_count": 0, "intel": [], "discovered": [],
+                           "blocked_until": 0.0, "block_reason": ""})
     GAME_LOOT.set(0)
     GAME_BLOCKED.set(0)
     return _game_public()

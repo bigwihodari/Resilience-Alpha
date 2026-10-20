@@ -494,6 +494,22 @@ class GameController:
         self._event(f"Sonde refusée : {self._detail(r)}", "error")
         return {"refused": True, "detail": self._detail(r), **self.state()}
 
+    def set_target(self, username):
+        name = (username or "").strip()
+        if not name:
+            return {"error": "cible vide", **self.state()}
+        try:
+            r = requests.post(f"{self.target}/api/game/target", json={"username": name}, timeout=6)
+        except Exception as e:  # noqa: BLE001
+            self._event(f"Changement de cible échoué : {e}", "error")
+            return {"error": str(e), **self.state()}
+        if r.status_code == 200:
+            self.last_target = r.json()
+            self._event(f"🎯 Nouvelle cible : {name} (reconnaissance à refaire).", "info")
+            return {"ok": True, **self.state()}
+        self._event(f"Cible refusée : {self._detail(r)}", "error")
+        return {"refused": True, "detail": self._detail(r), **self.state()}
+
     def heist(self, amount=None, source="courant"):
         if self.is_blocked():
             self._event("Retrait refusé — attaquant bloqué (cooldown en cours).", "error")
@@ -532,7 +548,9 @@ class GameController:
             "log": log,
             "target": {
                 "victim": st.get("victim", ""),
+                "discovered": st.get("discovered", []),
                 "loot": st.get("loot", 0), "loot_neutralized": st.get("loot_neutralized", 0),
+                "exfiltrated_total": st.get("exfiltrated_total", 0),
                 "recon_count": recon_count, "heist_count": st.get("heist_count", 0),
                 "intel": st.get("intel", []),
                 "blocked": st.get("blocked", False),

@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Guide de l'attaquant — le vol, pas à pas — Resilience-Alpha</title>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#261E48; --bg:#E4E6F3; --card:#fff; --lav:#A1A6D4; --soft:#EEF0F8;
+    --accent:#4B3FA6; --green:#1E8E6A; --red:#C2413C; --amber:#B8840F; --line:#D4D7EC;
+    --shadow:0 2px 10px rgba(38,30,72,.08),0 10px 30px rgba(38,30,72,.06);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:"Montserrat",system-ui,Arial,sans-serif;line-height:1.55}
+  .wrap{max-width:960px;margin:0 auto;padding:16px 16px 80px}
+  a{color:var(--accent)}
+  code{background:var(--soft);padding:1px 6px;border-radius:5px;font-size:.92em}
+  .hero{background:linear-gradient(135deg,#3a0f14,#5a1620);color:#fff;border-radius:20px;padding:30px 28px;margin-top:16px;box-shadow:var(--shadow)}
+  .hero h1{margin:.1em 0;font-size:clamp(24px,4.5vw,38px);font-weight:800}
+  .hero p{color:#ffd9db;margin:.3em 0 0}
+  h2{font-size:clamp(19px,3vw,24px);font-weight:800;margin:34px 0 10px;display:flex;align-items:center;gap:10px}
+  h2 .n{flex:0 0 auto;width:32px;height:32px;border-radius:9px;background:var(--red);color:#fff;display:grid;place-items:center;font-size:15px}
+  h3{font-size:16px;margin:16px 0 4px;color:var(--accent)}
+  p{margin:8px 0}
+  .card{background:var(--card);border-radius:14px;box-shadow:var(--shadow);padding:18px 20px;margin:12px 0;border-top:5px solid var(--red)}
+  .toc{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:16px}
+  .toc a{display:block;background:var(--card);border-radius:12px;padding:12px 14px;text-decoration:none;color:var(--ink);box-shadow:var(--shadow);font-weight:600;font-size:14px}
+  .toc a span{display:block;font-size:12px;color:var(--ink);opacity:.55;font-weight:500}
+  .step{display:flex;gap:12px;margin:10px 0}
+  .step .b{flex:0 0 auto;width:26px;height:26px;border-radius:50%;background:var(--soft);color:var(--red);font-weight:800;display:grid;place-items:center;font-size:13px}
+  .tip{background:#FFF6E6;border-left:5px solid var(--amber);border-radius:10px;padding:12px 14px;margin:12px 0;font-size:14px}
+  .warn{background:#FBE8E6;border-left:5px solid var(--red);border-radius:10px;padding:12px 14px;margin:12px 0;font-size:14px}
+  .ok{background:#E3F3EC;border-left:5px solid var(--green);border-radius:10px;padding:12px 14px;margin:12px 0;font-size:14px}
+  .flow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:14px 0;font-size:13.5px;font-weight:600}
+  .flow .b{background:var(--card);border:1px solid var(--line);border-radius:999px;padding:7px 13px;box-shadow:var(--shadow)}
+  .flow .ar{color:var(--lav);font-weight:800}
+  .score{display:inline-block;background:#2a1a4a;color:#fff;border-radius:8px;padding:2px 8px;font-weight:700}
+  footer{margin-top:30px;color:#6a6594;font-size:12.5px;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <h1>⚔️ Guide de l'attaquant — voler sans se faire prendre</h1>
+    <p>Le mode « jeu » de la console attaquant, expliqué simplement. But : exfiltrer un peu
+    d'argent d'un compte client… avant que l'IA de défense ne vous repère.</p>
+  </header>
+
+  <div class="toc">
+    <a href="#but">① L'idée du jeu <span>un jeu d'équilibre</span></a>
+    <a href="#recon">② Reconnaissance <span>faire fuiter des infos</span></a>
+    <a href="#cible">③ Choisir la cible <span>qui attaquer</span></a>
+    <a href="#vol">④ Le vol plafonné <span>courant / épargne</span></a>
+    <a href="#astuces">⑤ Les astuces <span>minuteur + succès</span></a>
+    <a href="#ia">⑥ La riposte de l'IA <span>blocage + bascule</span></a>
+    <a href="#doser">⑦ Doser pour gagner</a>
+  </div>
+
+  <div class="flow">
+    <span class="b">🔍 Reconnaissance</span><span class="ar">→</span>
+    <span class="b">🗂 Fuite d'infos</span><span class="ar">→</span>
+    <span class="b">🎯 Choix de la cible</span><span class="ar">→</span>
+    <span class="b">💰 Vol plafonné</span><span class="ar">→</span>
+    <span class="b">🧠 L'IA détecte</span><span class="ar">→</span>
+    <span class="b">⛔ Blocage + 🛡 bascule</span>
+  </div>
+
+  <h2 id="but"><span class="n">1</span>L'idée du jeu</h2>
+  <div class="card">
+    <p>La console attaquant contient, sous le panneau des 7 vecteurs d'attaque, une zone
+    <b>« Reconnaissance / Opération »</b>. C'est un <b>jeu d'équilibre</b> : vous essayez de voler
+    de l'argent sur un compte client de la banque fictive, pendant qu'une <b>intelligence
+    artificielle de défense</b> surveille la plateforme.</p>
+    <p>Deux façons de jouer : <b>discret</b> (on récolte des infos et un petit butin sans se faire
+    repérer) ou <b>bourrin</b> (on frappe fort… et on se fait bloquer). Tout est <b>fictif</b> et
+    limité à votre labo.</p>
+  </div>
+
+  <h2 id="recon"><span class="n">2</span>Reconnaissance : faire fuiter des infos</h2>
+  <div class="card">
+    <p>Le bouton <b>« 🔍 SONDER la cible »</b> envoie une sonde de reconnaissance. Chaque sonde
+    réussie fait <b>fuiter un peu plus d'informations</b> sur la banque et sur votre cible :</p>
+    <div class="step"><div class="b">1</div><div><b>L'annuaire</b> : la liste des comptes clients existants (de quoi choisir une victime).</div></div>
+    <div class="step"><div class="b">2</div><div><b>Le solde approximatif</b> de la cible (une fourchette, ex. « ~1000–1100 € »).</div></div>
+    <div class="step"><div class="b">3</div><div><b>La présence d'un livret d'épargne</b> (une seconde poche d'argent à viser).</div></div>
+    <p>Après assez de sondes, la console indique <b>« prêt à voler »</b>. Le pare-feu applicatif (WAF)
+    reste actif : les vraies injections SQL/XSS sont toujours bloquées — la reconnaissance du jeu,
+    elle, est un chemin prévu pour la démo.</p>
+  </div>
+
+  <h2 id="cible"><span class="n">3</span>Choisir la cible</h2>
+  <div class="card">
+    <p>Vous attaquez <b>qui vous voulez</b> (pas seulement un compte figé). En haut de la zone jeu,
+    le <b>sélecteur de cible</b> propose les comptes découverts par la reconnaissance — ou saisissez
+    un nom à la main — puis <b>« 🎯 Changer de cible »</b>.</p>
+    <div class="tip">Changer de cible <b>remet la reconnaissance à zéro</b> (les infos fuitées
+    valaient pour l'ancienne cible) : il faut re-sonder la nouvelle. Votre <b>butin, lui, est conservé</b>.</div>
+  </div>
+
+  <h2 id="vol"><span class="n">4</span>Le vol plafonné</h2>
+  <div class="card">
+    <p>Une fois assez d'infos récoltées, <b>« 💰 TENTER UN RETRAIT »</b> exfiltre de l'argent de la
+    cible. Vous choisissez la source : <b>compte courant</b> ou <b>livret d'épargne</b>, et un montant
+    (sinon le maximum).</p>
+    <p>Le vol est <b>volontairement plafonné</b> et « propre » : montant maximal <b>par retrait</b>,
+    plafond <b>cumulé</b> du butin, opération <b>atomique</b> (jamais de solde négatif). Le
+    <b>compteur de butin</b> (scoreboard) en haut de la zone affiche en gros :</p>
+    <div class="step"><div class="b">💰</div><div><b>Butin détenu</b> — ce que vous possédez en ce moment.</div></div>
+    <div class="step"><div class="b">Σ</div><div><b>Exfiltré (cumul)</b> — tout ce que vous avez volé depuis le début de la partie.</div></div>
+    <div class="step"><div class="b">🛡</div><div><b>Neutralisé par l'IA</b> — ce que la défense vous a repris.</div></div>
+  </div>
+
+  <h2 id="astuces"><span class="n">5</span>Les astuces (indices)</h2>
+  <div class="card">
+    <p>Des <b>astuces</b> vous guident vers l'étape suivante. Elles se débloquent de <b>deux façons</b> :</p>
+    <div class="step"><div class="b">⏱</div><div><b>Au minuteur</b> : une nouvelle astuce toutes les quelques minutes (compte à rebours « prochaine astuce dans mm:ss »).</div></div>
+    <div class="step"><div class="b">✓</div><div><b>À chaque succès</b> : dès qu'une attaque obtient quelque chose (fuite d'info ou butin), une astuce se débloque immédiatement.</div></div>
+  </div>
+
+  <h2 id="ia"><span class="n">6</span>La riposte de l'IA</h2>
+  <div class="card">
+    <p>Le couple <b>détecteur (machine learning) + orchestrateur</b> surveille la plateforme. Il
+    repère la <b>compromission</b> quand :</p>
+    <div class="step"><div class="b">!</div><div>le <b>butin devient trop gros</b> (retraits anormaux), ou</div></div>
+    <div class="step"><div class="b">!</div><div>vous lancez une <b>attaque trop forte</b> pendant l'opération (pic de trafic → anomalie), ou</div></div>
+    <div class="step"><div class="b">!</div><div>vous <b>enchaînez les sondes/retraits</b> trop vite (motif d'énumération).</div></div>
+    <p>Dès la détection, la riposte est automatique (aucune main humaine) :</p>
+    <div class="warn">
+      <b>⛔ Blocage + cooldown.</b> Vos attaques sont <b>refusées</b> et un <b>compte à rebours</b>
+      s'affiche dans la console.<br>
+      <b>🛡 Bascule secours.</b> Le serveur principal (compromis) <b>passe la main au serveur de
+      secours</b> (sain) — visible sur les pages Cockpit et Haute-Dispo de la cible.<br>
+      <b>💸 Butin neutralisé.</b> L'argent volé est <b>restauré</b> sur le compte de la cible : si
+      l'IA bascule à temps, <b>votre vol ne « gagne » pas</b>.
+    </div>
+    <p>Quand la menace retombe (cooldown écoulé, trafic redevenu normal), le système revient
+    <b>tout seul</b> à la normale et le principal reprend la main.</p>
+  </div>
+
+  <h2 id="doser"><span class="n">7</span>Doser pour gagner</h2>
+  <div class="card">
+    <div class="ok">Jouer <b>fin</b> : sonder tranquillement, choisir une cible, faire <b>un petit
+    retrait discret</b> → le butin reste à vous (l'IA ne vous repère pas).</div>
+    <div class="warn">Jouer <b>bourrin</b> : gros retraits ou flood d'attaques → l'IA vous
+    <b>bloque</b>, <b>bascule</b> sur le secours et <b>annule votre butin</b>.</div>
+    <p>Tout l'intérêt pédagogique est là : montrer qu'un système bien conçu <b>détecte</b> la fraude,
+    <b>se défend seul</b> et <b>protège l'argent</b>, même sous attaque.</p>
+  </div>
+
+  <footer>
+    Projet pédagogique Resilience-Alpha — données, comptes et attaques <b>fictifs</b>, limités à votre labo.<br>
+    Voir aussi : Guide de lancement (GUIDE-LANCEMENT.html) · README.md · SECURITE.md
+  </footer>
+</div>
+</body>
+</html>

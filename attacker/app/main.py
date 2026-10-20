@@ -24,10 +24,21 @@ CONSOLE_HTML = (_HERE / "console.html").read_text(encoding="utf-8")
 app.mount("/static", StaticFiles(directory=_HERE / "static"), name="static")
 
 
+_GUIDE = _HERE / "GUIDE-ATTAQUANT.html"
+
+
 @app.get("/", response_class=HTMLResponse)
 def console():
     html = CONSOLE_HTML.replace("__TARGET_URL__", TARGET_URL).replace("__TARGET_HOST__", TARGET_HOST)
     return HTMLResponse(html)
+
+
+@app.get("/guide", response_class=HTMLResponse)
+def guide():
+    """Doc pédagogique : comment marche le mode jeu (vol) côté attaquant."""
+    if _GUIDE.exists():
+        return HTMLResponse(_GUIDE.read_text(encoding="utf-8"))
+    return HTMLResponse("<p>Guide indisponible.</p>", status_code=404)
 
 
 @app.get("/api/config")
@@ -75,6 +86,11 @@ def game_recon():
 @app.post("/api/game/heist")
 def game_heist(body: dict = Body(default={})):
     return game.heist(body.get("amount"), body.get("source", "courant"))
+
+
+@app.post("/api/game/target")
+def game_target(body: dict = Body(default={})):
+    return game.set_target(body.get("username", ""))
 
 
 @app.post("/api/attack/stop")
