@@ -8,6 +8,7 @@ import os
 import re
 import time
 import json
+import random
 import asyncio
 import threading
 import datetime as dt
@@ -100,6 +101,29 @@ GAME_SEED_SAVINGS = float(os.environ.get("GAME_SEED_SAVINGS", "300"))    # livre
 # sur un montage 2 PC avec un vrai secours pour une bascule réseau réelle.
 GAME_DEGRADE = os.environ.get("GAME_DEGRADE", "0") == "1"
 
+# ---- P2.7 : mini-jeu Dino (récolte de pièces -> argent, validé serveur) ----
+DINO_COIN_VALUE = float(os.environ.get("DINO_COIN_VALUE", "1"))     # € par pièce
+DINO_MAX_SCORE = float(os.environ.get("DINO_MAX_SCORE", "2000"))    # plafond score brut / claim
+DINO_CLAIM_CAP = float(os.environ.get("DINO_CLAIM_CAP", "5000"))    # plafond € crédité / claim
+DINO_COOLDOWN = float(os.environ.get("DINO_COOLDOWN", "8"))         # s entre 2 récoltes / joueur
+DINO_MULTS = (1, 5, 10, 100)                                        # multiplicateurs bonus autorisés
+# Hack attaquant : détournement du gain Dino d'un client (protégé par l'IA).
+DINO_HIJACK_P = float(os.environ.get("DINO_HIJACK_P", "0.45"))          # proba de succès de base
+DINO_HIJACK_SHARE = float(os.environ.get("DINO_HIJACK_SHARE", "0.5"))   # part du gain détournée
+DINO_HIJACK_BLOCK_P = float(os.environ.get("DINO_HIJACK_BLOCK_P", "0.5"))  # proba de blocage si échec
+DINO_HIJACK_COOLDOWN = float(os.environ.get("DINO_HIJACK_COOLDOWN", "60"))  # cooldown si grillé
+dino_last = {}  # username -> epoch du dernier claim (anti-rafale)
+
+
+def _dino_mult(m) -> int:
+    """Borne le multiplicateur envoyé par le front à un palier autorisé (anti-triche)."""
+    try:
+        m = int(m)
+    except Exception:  # noqa: BLE001
+        m = 1
+    allowed = [a for a in DINO_MULTS if a <= m]
+    return max(allowed) if allowed else 1
+
 game_state = {
     "victim": GAME_VICTIM,
     "loot": 0.0,              # butin courant détenu par l'attaquant (non neutralisé)
@@ -115,6 +139,7 @@ game_state = {
     "loot_cap": GAME_LOOT_CAP,
     "recon_needed": GAME_RECON_FOR_HEIST,
     "insider_count": 0,       # nb d'intel « insider » achetés au banquier (traçable IA)
+    "dino_hijack": None,      # {"target": username} si un détournement Dino est armé
 }
 game_lock = threading.Lock()
 degraded = {"on": False}  # bascule : endpoints métier en 503 (gated par GAME_DEGRADE)
@@ -1821,10 +1846,114 @@ def game_reset(x_admin_token: str = Header(default=None)):
         game_state.update({"victim": GAME_VICTIM, "loot": 0.0, "loot_neutralized": 0.0,
                            "exfiltrated_total": 0.0, "recon_count": 0, "heist_count": 0,
                            "intel": [], "discovered": [], "blocked_until": 0.0, "block_reason": "",
-                           "insider_count": 0})
+                           "insider_count": 0, "dino_hijack": None})
     GAME_LOOT.set(0)
     GAME_BLOCKED.set(0)
     return _game_public()
+
+
+# ---------------- P2.7 : mini-jeu Dino (récolte) + hack détournement ----------------
+class DinoClaim(BaseModel):
+    score: float
+    multiplier: int | None = 1
+
+
+@app.post("/dino/claim")
+def dino_claim(body: DinoClaim, user: str = Depends(current_user)):
+    """Récolte Dino : convertit un score (plafonné) en argent crédité au joueur.
+    Validé serveur : plafond par claim + cooldown anti-rafale + multiplicateur borné.
+    Si un détournement est armé sur ce joueur, une part est exfiltrée vers l'attaquant."""
+    now = time.time()
+    with game_lock:
+        remaining = DINO_COOLDOWN - (now - dino_last.get(user, 0.0))
+        if remaining > 0:
+            raise HTTPException(429, f"patiente {round(remaining, 1)}s avant une nouvelle récolte")
+        dino_last[user] = now
+        hijack = game_state.get("dino_hijack")
+    mult = _dino_mult(body.multiplier)
+    raw = max(0.0, min(float(body.score or 0), DINO_MAX_SCORE))
+    earned = round(min(raw * mult * DINO_COIN_VALUE, DINO_CLAIM_CAP), 2)
+    if earned <= 0:
+        raise HTTPException(400, "score nul")
+    hijacked = hijack is not None and hijack.get("target") == user
+    diverted = 0.0
+    with Session(engine()) as s:
+        u = _user_or_404(s, user)
+        if (u.role or "client") != "client":
+            raise HTTPException(403, "réservé aux clients")
+        acc = s.scalar(select(Account).where(Account.user_id == u.id).with_for_update())
+        if hijacked:
+            with game_lock:
+                cap_left = GAME_LOOT_CAP - game_state["loot"] - game_state["loot_neutralized"]
+            diverted = round(min(earned * DINO_HIJACK_SHARE, GAME_HEIST_MAX, max(0.0, cap_left)), 2)
+        credit = round(earned - diverted, 2)
+        acc.balance = float(acc.balance) + credit
+        s.add(Transaction(account_id=acc.id, amount=credit, type="credit",
+                          recipient=f"DINO (x{mult})", status="completed"))
+        if diverted > 0:
+            s.add(Transaction(account_id=acc.id, amount=diverted, type="debit",
+                              recipient="⚠ GAIN DÉTOURNÉ (jeu)", status="completed"))
+        s.commit()
+        new_balance = float(acc.balance)
+    if hijacked:
+        with game_lock:
+            game_state["dino_hijack"] = None
+            if diverted > 0:
+                game_state["loot"] = round(game_state["loot"] + diverted, 2)
+                game_state["exfiltrated_total"] = round(game_state["exfiltrated_total"] + diverted, 2)
+            loot_now = game_state["loot"]
+        if diverted > 0:
+            GAME_LOOT.set(loot_now)
+            GAME_DINO_HIJACK.labels(result="hit").inc()
+            print(f"[GAME] DINO-HIJACK HIT target={user} diverted={diverted} loot={loot_now}", flush=True)
+            ws_manager.publish({"type": "tx", "from": user, "to": "⚠ INCONNU",
+                                "amount": diverted, "op": "hijack"})
+    ws_manager.publish({"type": "tx", "from": "DINO", "to": user, "amount": credit, "op": "dino"})
+    _check_win()
+    return {"ok": True, "earned": earned, "credited": credit, "diverted": diverted,
+            "multiplier": mult, "balance": new_balance, "hijacked": hijacked and diverted > 0}
+
+
+class HijackIn(BaseModel):
+    target: str
+
+
+@app.post("/game/dino-hijack")
+def dino_hijack(body: HijackIn, x_player: str = Header(default=None)):
+    """Hack attaquant : tente de détourner le prochain gain Dino d'un client.
+    Protégé par l'IA : proba de succès qui chute avec l'activité déjà menée ;
+    sur échec, risque de blocage (cooldown). Succès => détournement armé."""
+    if _cooldown_remaining() > 0:
+        raise HTTPException(403, f"attaquant bloqué — cooldown {_cooldown_remaining()}s")
+    target = (body.target or "").strip()
+    with Session(engine()) as s:
+        tu = s.scalar(select(User).where(User.username == target))
+        if tu is None or (tu.role or "client") != "client":
+            raise HTTPException(400, "cible invalide — un client existant est requis")
+    with game_lock:
+        heat = int(game_state.get("heist_count", 0)) + int(game_state.get("insider_count", 0))
+    p_success = max(0.1, DINO_HIJACK_P - 0.05 * heat)  # plus tu abuses, plus c'est dur
+    if random.random() <= p_success:
+        with game_lock:
+            game_state["dino_hijack"] = {"target": target}
+        GAME_DINO_HIJACK.labels(result="armed").inc()
+        print(f"[GAME] DINO-HIJACK ARMED target={target} p={p_success:.2f}", flush=True)
+        return {"ok": True, "armed": True, "target": target,
+                "message": f"Détournement armé sur « {target} » : son prochain gain Dino "
+                           f"sera en partie exfiltré.", **_game_public()}
+    GAME_DINO_HIJACK.labels(result="fail").inc()
+    if random.random() <= DINO_HIJACK_BLOCK_P:
+        with game_lock:
+            game_state["blocked_until"] = time.time() + DINO_HIJACK_COOLDOWN
+            game_state["block_reason"] = "détournement Dino repéré par l'IA"
+        GAME_BLOCKED.set(1)
+        print(f"[GAME] DINO-HIJACK FAIL+BLOCK target={target}", flush=True)
+        return {"ok": False, "armed": False, "blocked": True,
+                "message": "Détournement repéré par l'IA — tu es bloqué (cooldown).",
+                **_game_public()}
+    print(f"[GAME] DINO-HIJACK FAIL target={target} p={p_success:.2f}", flush=True)
+    return {"ok": False, "armed": False, "blocked": False,
+            "message": "Échec du détournement — réessaie.", **_game_public()}
 
 
 @app.post("/admin/degrade")
