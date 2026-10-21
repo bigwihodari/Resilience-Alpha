@@ -168,10 +168,10 @@ export default function Dashboard() {
         <div className="mt-4 h-3 bg-white/20 rounded-full overflow-hidden">
           <div className="h-full bg-gradient-to-r from-green-300 to-green-500 transition-all duration-700" style={{ width: `${progress}%` }} />
         </div>
-        <div className="text-xs opacity-80 mt-1">{progress.toFixed(2)} % vers le million</div>
+        <div className="text-xs opacity-80 mt-1">{progress.toFixed(2)} % vers le milliard</div>
       </div>
 
-      {lb.winner && <div className="bg-amber-400 text-ink rounded-2xl p-4 mb-4 text-center font-extrabold shadow-lg animate-pulse">🏆 VICTOIRE — {lb.winner.name} ({lb.winner.camp}) a atteint le million !</div>}
+      {lb.winner && <div className="bg-amber-400 text-ink rounded-2xl p-4 mb-4 text-center font-extrabold shadow-lg animate-pulse">🏆 VICTOIRE — {lb.winner.name} ({lb.winner.camp}) a atteint le milliard !</div>}
 
       {/* Menu (onglets) — collant en haut au défilement */}
       <div role="tablist" aria-label="Navigation" className="sticky top-0 z-30 flex gap-2 overflow-x-auto py-2 mb-4 -mx-4 px-4 bg-[#E4E6F3]/85 backdrop-blur">
@@ -210,9 +210,11 @@ export default function Dashboard() {
             <div className="bg-white rounded-2xl shadow p-4">
               <div className="flex items-center justify-between">
                 <div className="font-bold text-ink">Livret principal <span className="text-xs text-ink/40">niv {liv.principal.level || 0}</span></div>
-                <div className="text-xs text-green-600 font-semibold">+{((liv.principal.rate || 0) * 100).toFixed(2)} % / {liv.interval}s</div>
+                {liv.principal.balance >= (liv.livret_max || 150000)
+                  ? <div className="text-xs font-bold text-red-600 animate-pulse">PLEIN — retire pour relancer</div>
+                  : <div className="text-xs text-green-600 font-semibold">+{((liv.principal.rate || 0) * 100).toFixed(2)} % / {liv.interval}s</div>}
               </div>
-              <div className="text-3xl font-extrabold text-green-700 mt-1">{euro(liv.principal.balance)}</div>
+              <div className="text-3xl font-extrabold text-green-700 mt-1">{euro(liv.principal.balance)} <span className="text-sm font-semibold text-ink/40">/ {euro(liv.livret_max || 150000)}</span></div>
               <div className="flex flex-wrap items-center gap-2 mt-2">
                 <input id="amt-principal" type="number" min="1" defaultValue="100" className="w-24 border border-lav rounded-lg px-2 py-1.5 text-sm" title="Montant à déposer / retirer" />
                 <button onClick={() => { const a = amtOf("principal"); act(() => savingsDeposit(a), `Dépôt de ${euro(a)}`); }} className="text-xs bg-green-600 text-white font-semibold px-3 py-1.5 rounded-lg hover:bg-green-700">Déposer</button>
@@ -224,9 +226,11 @@ export default function Dashboard() {
               <div key={lv.id} className="bg-white rounded-2xl shadow p-4">
                 <div className="flex items-center justify-between">
                   <div className="font-bold text-ink">{lv.name} <span className="text-xs text-ink/40">niv {lv.level}</span></div>
-                  <div className="text-xs text-green-600 font-semibold">+{(lv.rate * 100).toFixed(2)} % / {liv.interval}s</div>
+                  {lv.balance >= (liv.livret_max || 150000)
+                    ? <div className="text-xs font-bold text-red-600 animate-pulse">PLEIN — retire pour relancer</div>
+                    : <div className="text-xs text-green-600 font-semibold">+{(lv.rate * 100).toFixed(2)} % / {liv.interval}s</div>}
                 </div>
-                <div className="text-2xl font-extrabold text-green-700 mt-1">{euro(lv.balance)}</div>
+                <div className="text-2xl font-extrabold text-green-700 mt-1">{euro(lv.balance)} <span className="text-sm font-semibold text-ink/40">/ {euro(liv.livret_max || 150000)}</span></div>
                 <div className="flex flex-wrap items-center gap-2 mt-2">
                   <input id={`amt-${lv.id}`} type="number" min="1" defaultValue="100" className="w-24 border border-lav rounded-lg px-2 py-1.5 text-sm" title="Montant à déposer / retirer" />
                   <button onClick={() => { const a = amtOf(lv.id); act(() => livretDeposit(lv.id, a), `Dépôt de ${euro(a)}`); }} className="text-xs bg-green-600 text-white font-semibold px-3 py-1.5 rounded-lg hover:bg-green-700">Déposer</button>
@@ -392,7 +396,7 @@ export default function Dashboard() {
       {/* CLASSEMENT */}
       {tab === "classement" && (
         <div className="bg-white rounded-2xl shadow overflow-hidden">
-          <div className="px-4 py-3 border-b border-lavsoft font-bold text-ink">🏁 Course au million</div>
+          <div className="px-4 py-3 border-b border-lavsoft font-bold text-ink">🏁 Course au milliard</div>
           {lb.board.map((b, i) => (
             <div key={b.name} className={`flex items-center gap-3 px-4 py-2.5 border-b border-lavsoft ${b.name === me ? "bg-lavsoft" : ""}`}>
               <span className={`w-7 text-center font-black ${i === 0 ? "text-amber-500" : "text-ink/40"}`}>{i + 1}</span>

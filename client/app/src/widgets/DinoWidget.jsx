@@ -16,7 +16,7 @@ export default function DinoWidget({ onEarned }) {
 
   const W = 620, H = 240, GROUND = H - 42;
   const DINO = { x: 62, w: 26, h: 30 };
-  const GRAV = 0.9, JUMP = -13.5;
+  const GRAV = 0.58, JUMP = -13.5;   // gravité réduite -> saut plus haut et plus de hang time (plus facile)
 
   function reset() {
     g.current = {

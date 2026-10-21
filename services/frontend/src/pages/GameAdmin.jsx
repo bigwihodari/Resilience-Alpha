@@ -97,7 +97,7 @@ export default function GameAdmin() {
       {/* Leaderboard */}
       <div className="bg-white rounded-2xl shadow p-5 mb-5">
         <div className="flex items-center justify-between mb-3">
-          <div className="font-bold text-ink">🏁 Course au million</div>
+          <div className="font-bold text-ink">🏁 Course au milliard</div>
           {lb.winner && <span className="bg-amber-400 text-ink rounded-full px-3 py-1 font-bold text-sm">🏆 {lb.winner.name} ({lb.winner.camp}) a gagné !</span>}
         </div>
         {lb.board.slice(0, 6).map((b, i) => {

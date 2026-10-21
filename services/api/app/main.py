@@ -42,9 +42,12 @@ REPL_INTERVAL = float(os.environ.get("REPL_INTERVAL", "2"))
 HA_NAME = os.environ.get("HA_NAME", "PRINCIPAL" if ROLE == "primary" else "SECOURS")
 # Livret d'epargne : taux applique toutes les SAVINGS_INTERVAL secondes.
 # Modifiable EN DIRECT par le banquier (savings_cfg) ; ces env sont les valeurs de depart.
-SAVINGS_RATE = float(os.environ.get("SAVINGS_RATE", "0.01"))       # 1% par cycle (demo)
+SAVINGS_RATE = float(os.environ.get("SAVINGS_RATE", "0.001"))      # 0,1 % par cycle (défaut)
 SAVINGS_INTERVAL = float(os.environ.get("SAVINGS_INTERVAL", "30"))  # secondes
 savings_cfg = {"rate": SAVINGS_RATE, "interval": SAVINGS_INTERVAL}
+# Plafond par livret (principal inclus) : la production s'arrête à ce montant ; il faut
+# retirer pour qu'elle reprenne. On harvest vers le compte courant pour monter au classement.
+LIVRET_MAX = float(os.environ.get("LIVRET_MAX", "150000"))
 
 # Destinataires externes autorises (marchands/canari). Un paiement vers un nom
 # qui n'est NI un client connu NI un marchand de cette liste est refuse (404) :
@@ -53,7 +56,7 @@ MERCHANTS = set(m.strip() for m in os.environ.get(
     "MERCHANTS", "MERCHANT-01,MERCHANT-02,MERCHANT-03,SHOP-42,CANARY").split(",") if m.strip())
 
 # Condition de victoire du jeu : premier (client OU attaquant) a atteindre la cible.
-WIN_TARGET = float(os.environ.get("WIN_TARGET", "1000000"))
+WIN_TARGET = float(os.environ.get("WIN_TARGET", "1000000000"))   # 1 milliard
 game_winner = {"name": None, "camp": None, "networth": 0.0, "at": None}
 # Compte "banque" (coffre) : cible de hack haut-risque, exclu du jeu/leaderboard.
 BANK_USER = os.environ.get("BANK_USER", "trafficbot")
@@ -70,7 +73,7 @@ SHOP = {
 LIVRET_RATE_BASE = 200.0      # coût de base pour booster le taux d'un livret (principal, position 0)
 LIVRET_RATE_GROWTH = 1.18     # exponentiel sur le NIVEAU de boost
 LIVRET_NUMBER_GROWTH = float(os.environ.get("LIVRET_NUMBER_GROWTH", "5"))  # exponentiel sur le NUMERO du livret
-LIVRET_RATE_STEP = 0.005      # +0.5 % de taux par niveau de boost
+LIVRET_RATE_STEP = 0.001      # +0,1 % de taux par niveau de boost
 BASE_LIVRET_SLOTS = 1         # livrets supplémentaires autorisés au départ (hors principal)
 
 # ---- P3.5 : SHOP HACKER (payé avec le butin) — coûts exponentiels ----
@@ -928,6 +931,8 @@ def _savings_move(user: str, amount: float, op: str):
         if op == "deposit":
             if float(acc.balance) < amount:
                 raise HTTPException(402, "solde courant insuffisant")
+            if float(acc.savings) + amount > LIVRET_MAX:
+                raise HTTPException(400, f"plafond du livret {LIVRET_MAX:.0f} € — retire avant de redéposer")
             acc.balance = float(acc.balance) - amount
             acc.savings = float(acc.savings) + amount
             s.add(Transaction(account_id=acc.id, amount=amount, type="debit",
@@ -990,6 +995,7 @@ def list_livrets(user: str = Depends(current_user)):
                          "upgrade_cost": _boost_cost(idx + 1, lv.level),
                          "rate_step": LIVRET_RATE_STEP} for idx, lv in enumerate(extras)],
             "interval": savings_cfg["interval"],
+            "livret_max": LIVRET_MAX,
         }
 
 
@@ -1022,6 +1028,8 @@ def _livret_move(user, livret_id, amount, op):
         if op == "deposit":
             if float(acc.balance) < amount:
                 raise HTTPException(402, "solde courant insuffisant")
+            if float(lv.balance) + amount > LIVRET_MAX:
+                raise HTTPException(400, f"plafond du livret {LIVRET_MAX:.0f} € — retire avant de redéposer")
             acc.balance = float(acc.balance) - amount
             lv.balance = float(lv.balance) + amount
         else:
@@ -1256,18 +1264,21 @@ def savings_interest_loop():
                 def _rbonus(uid):
                     return SPECIAL_UPGRADES["sp_interest"]["step"] * int(sp_int.get(uid, 0))
 
-                for a in s.scalars(select(Account).where(Account.savings > 0)).all():
+                # Plafond LIVRET_MAX : au plafond la production s'ARRÊTE (il faut retirer
+                # pour qu'elle reprenne) ; sinon on crédite sans jamais dépasser le plafond.
+                for a in s.scalars(select(Account).where(Account.savings > 0, Account.savings < LIVRET_MAX)).all():
                     eff_rate = rate + LIVRET_RATE_STEP * int(p_levels.get(a.user_id, 0)) + _rbonus(a.user_id)
                     if eff_rate <= 0:
                         continue
                     interest = round(float(a.savings) * eff_rate * _mult(a.user_id), 2)
                     if interest > 0:
-                        a.savings = float(a.savings) + interest
+                        a.savings = round(min(LIVRET_MAX, float(a.savings) + interest), 2)
                         touched = True
-                for lv in s.scalars(select(Livret).where(Livret.balance > 0, Livret.rate > 0)).all():
+                for lv in s.scalars(select(Livret).where(Livret.balance > 0, Livret.rate > 0,
+                                                         Livret.balance < LIVRET_MAX)).all():
                     interest = round(float(lv.balance) * (float(lv.rate) + _rbonus(lv.user_id)) * _mult(lv.user_id), 2)
                     if interest > 0:
-                        lv.balance = float(lv.balance) + interest
+                        lv.balance = round(min(LIVRET_MAX, float(lv.balance) + interest), 2)
                         touched = True
                 s.commit()
             if touched:
