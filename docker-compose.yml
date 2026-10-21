@@ -57,7 +57,7 @@ services:
       WIN_TARGET: ${WIN_TARGET:-1000000000}
       REPL_TOKEN: ${REPL_TOKEN:-repl-secret}
       # Jeu de hacker : cible, plafonds du vol, dégradé/bascule (OFF par défaut).
-      GAME_VICTIM: ${GAME_VICTIM:-bob}
+      GAME_VICTIM: ${GAME_VICTIM:-hodari}
       GAME_HEIST_MAX: ${GAME_HEIST_MAX:-120}
       GAME_LOOT_CAP: ${GAME_LOOT_CAP:-1000000}
       GAME_DEGRADE: ${GAME_DEGRADE:-0}

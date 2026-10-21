@@ -164,6 +164,14 @@
   #chat-form{display:flex;gap:6px;padding:8px;border-top:1px solid var(--line)}
   #chat-form input{flex:1;background:#0E1020;border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:8px}
   #chat-form button{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:8px 12px;font-weight:700;cursor:pointer}
+  /* Login d'identité attaquant */
+  #atk-login{position:fixed;inset:0;z-index:200;background:rgba(14,16,32,.92);display:flex;align-items:center;justify-content:center;padding:16px}
+  #atk-login .box{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:22px;max-width:420px;width:100%;
+    box-shadow:0 20px 60px rgba(0,0,0,.6)}
+  #atk-login button{background:#1b2140;color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:10px 16px;font-weight:800;cursor:pointer;font-size:15px}
+  #atk-login button:hover{border-color:var(--accent)}
+  #atk-login button.go{background:var(--accent);color:#fff;border:0}
+  #atk-login input{flex:1;background:#0E1020;border:1px solid var(--line);color:var(--txt);border-radius:10px;padding:10px}
 </style>
 </head>
 <body>
@@ -354,6 +362,28 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
+// ===== Identité attaquant (multi-joueur) : chaque navigateur choisit son pseudo, envoyé
+// en en-tête X-Player sur TOUTES les requêtes -> actions/suspicion/chat/enchères attribués. =====
+let ATK_NAME = "";
+try { ATK_NAME = localStorage.getItem("atk_name") || ""; } catch (e) {}
+(function () {
+  const _f = window.fetch.bind(window);
+  window.fetch = (url, opts) => { opts = opts || {}; if (ATK_NAME) opts.headers = Object.assign({}, opts.headers || {}, { "X-Player": ATK_NAME }); return _f(url, opts); };
+})();
+function atkLogin(name) { name = (name || "").trim().slice(0, 32); if (!name) return; try { localStorage.setItem("atk_name", name); } catch (e) {} location.reload(); }
+if (!ATK_NAME) {
+  const ov = document.createElement("div");
+  ov.id = "atk-login";
+  ov.innerHTML = '<div class="box"><div style="color:var(--red2);font-weight:800;letter-spacing:.18em;font-size:11px">RESILIENCE-ALPHA · OFFENSIVE</div>'
+    + '<h2 style="margin:6px 0 2px;font-size:22px">Choisis ton identité d\'attaquant</h2>'
+    + '<p style="color:var(--muted);font-size:13px;margin:0 0 14px">Plusieurs attaquants peuvent jouer : chacun se connecte avec son pseudo (actions, suspicion IA, chat et enchères te sont attribués).</p>'
+    + '<div style="display:flex;gap:10px;flex-wrap:wrap"><button data-n="Timéo">🦹 Timéo</button><button data-n="Théo">🦹 Théo</button></div>'
+    + '<div style="display:flex;gap:8px;margin-top:12px"><input id="atk-custom" placeholder="ou un autre pseudo…" maxlength="32" /><button id="atk-go" class="go">Entrer</button></div></div>';
+  document.body.appendChild(ov);
+  ov.querySelectorAll("button[data-n]").forEach(b => b.onclick = () => atkLogin(b.getAttribute("data-n")));
+  $("atk-go").onclick = () => atkLogin($("atk-custom").value);
+  $("atk-custom").addEventListener("keydown", (e) => { if (e.key === "Enter") atkLogin($("atk-custom").value); });
+}
 $("intensity").oninput = () => $("intv").textContent = $("intensity").value;
 $("duration").oninput = () => $("durv").textContent = $("duration").value;
 
@@ -612,7 +642,8 @@ async function pollGame(){
 setInterval(pollGame, 1000); pollGame();
 
 // ================= OUTILS HACKER : heat / shop / intel / phishing =================
-let MYNAME = "attaquant";
+let MYNAME = ATK_NAME || "attaquant";
+try { $("tz-me").textContent = MYNAME; } catch (e) {}
 const _origRender = renderGame;
 renderGame = function(s){ try { if (s && s.me){ MYNAME = s.me; $("tz-me").textContent = s.me; } } catch(e){} return _origRender(s); };
 

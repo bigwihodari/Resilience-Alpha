@@ -4,7 +4,7 @@ import { login, register, setSession } from "../api.js";
 
 export default function Login() {
   const [mode, setMode] = useState("login");
-  const [username, setUsername] = useState("alice");
+  const [username, setUsername] = useState("adrien");
   const [password, setPassword] = useState("password123");
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
@@ -45,7 +45,7 @@ export default function Login() {
           className="w-full text-sm text-accent mt-3 hover:underline">
           {mode === "login" ? "Créer un nouveau compte" : "J'ai déjà un compte"}
         </button>
-        <p className="text-xs text-ink/40 mt-3 text-center">Démo : alice / bob — mot de passe : password123</p>
+        <p className="text-xs text-ink/40 mt-3 text-center">Démo : adrien / hodari — mot de passe : password123</p>
       </form>
     </div>
   );

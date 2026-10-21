@@ -6,18 +6,26 @@ avec tous les liens de supervision de la cible. Rien à chercher ailleurs.
 import os
 import pathlib
 
-from fastapi import FastAPI, Body
+from fastapi import FastAPI, Body, Header, Depends
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from attacks import AttackController, GameController
+from attacks import AttackController, GameController, set_current_player
 
 TARGET_URL = os.environ.get("TARGET_URL", "http://host.docker.internal:8080")
 TARGET_HOST = os.environ.get("TARGET_HOST", "") or TARGET_URL.split("//")[-1].split(":")[0]
 
 ctrl = AttackController(TARGET_URL)
 game = GameController(TARGET_URL, ctrl)
-app = FastAPI(title="Resilience-Alpha — Console Attaquant")
+
+
+async def _identity(x_player: str = Header(default=None)):
+    """Chaque requête du navigateur porte le pseudo choisi (X-Player) -> on le propage
+    à la cible. Appliqué à toutes les routes : plusieurs attaquants, chacun son identité."""
+    set_current_player(x_player)
+
+
+app = FastAPI(title="Resilience-Alpha — Console Attaquant", dependencies=[Depends(_identity)])
 
 _HERE = pathlib.Path(__file__).parent
 CONSOLE_HTML = (_HERE / "console.html").read_text(encoding="utf-8")

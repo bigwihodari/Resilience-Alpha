@@ -165,7 +165,7 @@ repl_state = {"role": ROLE, "name": HA_NAME, "promoted": ROLE == "primary", "pee
 # pour que la chaîne IA (detector/orchestrator) puisse détecter l'exploitation.
 # Tout est fictif / pédagogique. Les retraits du jeu sont PLAFONNÉS et atomiques.
 # ----------------------------------------------------------------------------
-GAME_VICTIM = os.environ.get("GAME_VICTIM", "bob")          # compte client ciblé
+GAME_VICTIM = os.environ.get("GAME_VICTIM", "hodari")       # compte client ciblé
 GAME_HEIST_MAX = float(os.environ.get("GAME_HEIST_MAX", "120"))   # plafond PAR retrait hérité (dino-hijack)
 # Plafond CUMULÉ du butin. Dans le jeu idle (course au million), le limiteur n'est
 # plus un petit plafond mais le RISQUE (proba de se faire cramer) ; on autorise donc

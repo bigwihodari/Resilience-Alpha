@@ -51,7 +51,7 @@ export default function Login() {
           {loading ? "Connexion…" : "Se connecter"}
         </button>
         <p className="text-xs text-ink/40 mt-4 text-center">
-          Démo client : alice / password123<br />Banquier : banquier / password123
+          Démo client : adrien / password123<br />Banquier : banquier / password123
         </p>
       </form>
     </div>

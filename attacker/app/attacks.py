@@ -10,7 +10,17 @@ import threading
 import time
 import random
 import statistics
+import contextvars
 from collections import deque, Counter
+
+# Identité de l'attaquant pour la requête courante (chaque navigateur envoie son pseudo
+# via l'en-tête X-Player). Le contextvar est copié dans le thread d'exécution de la route
+# (anyio), donc _h() le lit correctement par requête -> plusieurs attaquants en parallèle.
+_player_var = contextvars.ContextVar("atk_player", default=None)
+
+
+def set_current_player(name):
+    _player_var.set((name or "").strip()[:32] or None)
 
 import requests
 
@@ -455,8 +465,10 @@ class GameController:
             self.log.append({"t": time.strftime("%H:%M:%S"), "msg": msg, "kind": kind})
 
     def _h(self):
-        """En-tete d'identite attaquant (X-Player) envoye a la cible."""
-        return {"X-Player": self.name}
+        """En-tete d'identite attaquant (X-Player) envoye a la cible. L'identite vient
+        du navigateur (chaque attaquant choisit son pseudo) via le contextvar de requete ;
+        a defaut (tache de fond), on retombe sur le pseudo par defaut du conteneur."""
+        return {"X-Player": _player_var.get() or self.name}
 
     def _reveal_next(self):
         with self.lock:

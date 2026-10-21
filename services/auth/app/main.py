@@ -21,7 +21,7 @@ DATABASE_URL = os.environ["DATABASE_URL"]
 JWT_SECRET = os.environ.get("JWT_SECRET", "dev-secret")
 JWT_ALG = "HS256"
 JWT_TTL_MIN = int(os.environ.get("JWT_TTL_MIN", "60"))
-DEMO_USER = os.environ.get("DEMO_USER", "alice")
+DEMO_USER = os.environ.get("DEMO_USER", "adrien")
 DEMO_PASSWORD = os.environ.get("DEMO_PASSWORD", "password123")
 BANKER_USER = os.environ.get("BANKER_USER", "banquier")
 BANKER_PASSWORD = os.environ.get("BANKER_PASSWORD", DEMO_PASSWORD)
@@ -147,7 +147,7 @@ def startup():
         c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(16) NOT NULL DEFAULT 'client'"))
     # Les tables sont créées par db/init.sql ; on sème les comptes de démo.
     # Clients (avec un compte de paiement) + un compte banquier (sans compte, rôle 'banker').
-    client_seeds = [(DEMO_USER, DEMO_PASSWORD), ("bob", DEMO_PASSWORD)]
+    client_seeds = [(DEMO_USER, DEMO_PASSWORD), ("hodari", DEMO_PASSWORD)]
     with Session(engine()) as s:
         for username, pw in client_seeds:
             if s.scalar(select(User).where(User.username == username)) is None:
