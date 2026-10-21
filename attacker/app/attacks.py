@@ -537,13 +537,14 @@ class GameController:
         self._event(f"Cible refusée : {self._detail(r)}", "error")
         return {"refused": True, "detail": self._detail(r), **self.state()}
 
-    def heist(self, amount=None, source="courant", livret_id=None):
+    def heist(self, amount=None, source="courant", livret_id=None, target=None, target_type=None):
         if self.is_blocked():
             self._event("Retrait refusé — attaquant bloqué (cooldown en cours).", "error")
             return {"blocked": True, **self.state()}
         try:
             r = requests.post(f"{self.target}/api/game/heist",
-                              json={"amount": amount, "source": source, "livret_id": livret_id},
+                              json={"amount": amount, "source": source, "livret_id": livret_id,
+                                    "target": target, "target_type": target_type},
                               headers=self._h(), timeout=6)
         except Exception as e:  # noqa: BLE001
             self._event(f"Retrait échoué : {e}", "error")
@@ -686,7 +687,9 @@ class GameController:
         return {"error": self._detail(r)}
 
     def state(self):
-        st = self.last_target or {}
+        # Fetch FRAIS avec l'identité de la requête (X-Player) -> butin/cooldown PROPRES à
+        # l'attaquant courant (sinon on renverrait l'état primaire mis en cache par la tâche de fond).
+        st = self._fetch_target() or {}
         now = time.time()
         with self.lock:
             revealed = self.tips_revealed

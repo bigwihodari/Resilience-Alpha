@@ -397,9 +397,15 @@ if (!ATK_NAME) {
   $("atk-go").onclick = () => atkLogin($("atk-custom").value);
   $("atk-custom").addEventListener("keydown", (e) => { if (e.key === "Enter") atkLogin($("atk-custom").value); });
 }
-// Nom du compte de la banque (coffre) pour le proposer comme cible.
-let BANK_NAME = "";
-fetch("/api/game/targets").then(r => r.json()).then(d => { BANK_NAME = (d && d.bank) || ""; }).catch(() => {});
+// Cibles spéciales : la banque (coffre) + les autres attaquants (PvP).
+let BANK_NAME = "", ATTACKERS = [];
+function refreshTargets(){
+  fetch("/api/game/targets").then(r=>r.json()).then(d=>{
+    BANK_NAME = (d && d.bank) || "";
+    ATTACKERS = ((d && d.attackers) || []).map(a=>a.handle).filter(h=>h && h!==ATK_NAME);
+  }).catch(()=>{});
+}
+refreshTargets(); setInterval(refreshTargets, 5000);
 $("intensity").oninput = () => $("intv").textContent = $("intensity").value;
 $("duration").oninput = () => $("durv").textContent = $("duration").value;
 
@@ -573,12 +579,13 @@ function renderGame(s){
   // Sélecteur de cible
   $("tg-cur").textContent = t.victim || "?";
   const disc = t.discovered || [];
-  const sig = BANK_NAME + "|" + disc.join(",");
+  const sig = BANK_NAME + "|" + ATTACKERS.join(",") + "|" + disc.join(",");
   if (sig !== tgDiscovered){
     tgDiscovered = sig;
     const sel = $("tg-sel");
-    sel.innerHTML = '<option value="">— cibles découvertes —</option>'
+    sel.innerHTML = '<option value="">— cibles —</option>'
       + (BANK_NAME ? '<option value="'+BANK_NAME+'">🏦 Banque (coffre — IA TRÈS alerte)</option>' : '')
+      + ATTACKERS.map(h=>'<option value="'+h+'">🦹 '+h+' (attaquant — PvP)</option>').join("")
       + disc.map(n=>'<option value="'+n+'">'+n+'</option>').join("");
   }
 
