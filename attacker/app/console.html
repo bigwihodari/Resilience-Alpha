@@ -645,7 +645,9 @@ setInterval(pollGame, 1000); pollGame();
 let MYNAME = ATK_NAME || "attaquant";
 try { $("tz-me").textContent = MYNAME; } catch (e) {}
 const _origRender = renderGame;
-renderGame = function(s){ try { if (s && s.me){ MYNAME = s.me; $("tz-me").textContent = s.me; } } catch(e){} return _origRender(s); };
+// Si l'attaquant a choisi un pseudo, il est AUTORITAIRE (ne pas l'écraser par l'état
+// serveur mis en cache par la tâche de fond, qui sonde sous le pseudo par défaut).
+renderGame = function(s){ try { if (ATK_NAME){ MYNAME = ATK_NAME; $("tz-me").textContent = ATK_NAME; } else if (s && s.me){ MYNAME = s.me; $("tz-me").textContent = s.me; } } catch(e){} return _origRender(s); };
 
 async function pollHeat(){
   try{
