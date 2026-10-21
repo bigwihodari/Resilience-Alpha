@@ -27,7 +27,13 @@ ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "orchestrator-admin-token")
 INTERNAL_TOKEN = os.environ.get("INTERNAL_TOKEN", "internal-trusted-token")
 CANARY_USER = os.environ.get("CANARY_USER", "canary")
 CANARY_PASSWORD = os.environ.get("CANARY_PASSWORD", "password123")
-POLL = float(os.environ.get("POLL", "3"))
+# MODE JEU (défaut) : l'orchestrateur OBSERVE et affiche (suspicion par IP des attaquants,
+# WAF, intégrité) mais ne lance AUCUNE action de fond qui gêne les clients :
+#  - pas de transactions « canari » automatiques (plus de tx d'anomalie en arrière-plan) ;
+#  - pas d'activation auto du bouclier anti-DoS (qui throttlerait les logins clients).
+# La détection/isolation des ATTAQUANTS reste entière (gérée par l'API, par IP).
+GAME_MODE = os.environ.get("ORCH_GAME_MODE", "1") not in ("0", "false", "False", "")
+POLL = float(os.environ.get("POLL", "6" if os.environ.get("ORCH_GAME_MODE", "1") not in ("0", "false", "False", "") else "3"))
 CONFIRM = int(os.environ.get("CONFIRM", "2"))   # polls anormaux consécutifs avant d'agir
 CLEAR = int(os.environ.get("CLEAR", "4"))        # polls normaux consécutifs avant de lever le bouclier
 
@@ -166,7 +172,12 @@ def loop():
         anom_streak = anom_streak + 1 if is_anom else 0
         clear_streak = 0 if is_anom else clear_streak + 1
 
-        if st == "NORMAL" and trained and anom_streak >= CONFIRM:
+        if GAME_MODE:
+            # Mode jeu : on n'enclenche PAS le bouclier ni les canaris sur une anomalie ML
+            # (le trafic de jeu normal peut faire bouger le score — on ne throttle jamais
+            # les clients). La détection des attaquants (par IP) reste gérée par l'API.
+            pass
+        elif st == "NORMAL" and trained and anom_streak >= CONFIRM:
             add_event(f"Anomalie confirmée par le ML (score {score})", "alert")
             with lock:
                 state["state"] = "REMEDIATING"
@@ -260,18 +271,20 @@ def loop():
             with lock:
                 state["compromise"] = "BLOCKED"
                 state["failover"] = True
-            set_degrade(True)  # banderole bascule (nginx si GAME_DEGRADE=1 sur 2 PC)
-            add_event("Bascule : le principal passe la main au SECOURS (isolation du suspect)", "action")
-            ok, lat, detail = run_canary_record()
-            if ok:
-                add_event(f"Transaction canari RÉUSSIE ({lat} ms) — service protégé malgré l'attaque", "success")
+            add_event("Isolation du suspect par l'IA — les autres joueurs continuent normalement", "action")
+            if not GAME_MODE:
+                set_degrade(True)  # banderole bascule (nginx si GAME_DEGRADE=1 sur 2 PC)
+                ok, lat, detail = run_canary_record()
+                if ok:
+                    add_event(f"Transaction canari RÉUSSIE ({lat} ms) — service protégé malgré l'attaque", "success")
             game_clear = 0
 
         elif comp == "BLOCKED":
             calm = not blocked_actors and not is_anom
             game_clear = game_clear + 1 if calm else 0
             if game_clear >= CLEAR:
-                set_degrade(False)
+                if not GAME_MODE:
+                    set_degrade(False)
                 with lock:
                     state["compromise"] = "CLEAR"
                     state["failover"] = False

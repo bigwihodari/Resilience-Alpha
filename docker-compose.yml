@@ -207,6 +207,9 @@ services:
       # Jeu de hacker : réglages de la détection de compromission + cooldown.
       GAME_COOLDOWN: ${GAME_COOLDOWN:-120}
       GAME_LOOT_ALERT: ${GAME_LOOT_ALERT:-200}
+      # Mode jeu (défaut) : observe/affiche mais ne lance NI canari (transactions auto)
+      # NI bouclier anti-DoS auto (jamais de throttle des clients). ORCH_GAME_MODE=0 = démo défense complète.
+      ORCH_GAME_MODE: ${ORCH_GAME_MODE:-1}
     depends_on:
       - detector
       - auth
