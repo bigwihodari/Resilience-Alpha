@@ -612,6 +612,21 @@ class GameController:
         self._event(f"Enchère refusée : {self._detail(r)}", "error")
         return {"error": self._detail(r)}
 
+    def chat_rooms(self):
+        """Salons de discussion accessibles à l'attaquant (au moins le salon global)."""
+        return self._get("/api/chat/rooms")
+
+    def chat_messages(self, room_id, after=0):
+        return self._get(f"/api/chat/rooms/{room_id}/messages?after={after}")
+
+    def chat_post(self, room_id, body):
+        try:
+            r = requests.post(f"{self.target}/api/chat/rooms/{room_id}/messages",
+                              json={"body": body}, headers=self._h(), timeout=6)
+        except Exception as e:  # noqa: BLE001
+            return {"error": str(e)}
+        return r.json() if r.status_code == 200 else {"error": self._detail(r)}
+
     def phishing_list(self):
         return self._get("/api/game/phishing")
 

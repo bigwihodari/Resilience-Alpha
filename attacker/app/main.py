@@ -134,6 +134,21 @@ def phishing_close(campaign_id: int):
     return game.phishing_close(campaign_id)
 
 
+@app.get("/api/chat/rooms")
+def chat_rooms():
+    return game.chat_rooms()
+
+
+@app.get("/api/chat/rooms/{room_id}/messages")
+def chat_messages(room_id: int, after: int = 0):
+    return game.chat_messages(room_id, after)
+
+
+@app.post("/api/chat/rooms/{room_id}/messages")
+def chat_post(room_id: int, body: dict = Body(default={})):
+    return game.chat_post(room_id, body.get("body", ""))
+
+
 @app.get("/api/game/auctions")
 def game_auctions():
     return game.auctions()

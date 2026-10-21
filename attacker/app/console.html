@@ -143,6 +143,27 @@
   .targetbox button:hover{background:#363c5e}
   @media(max-width:760px){.gamegrid{grid-template-columns:1fr}.gkpis{grid-template-columns:repeat(2,1fr)}
     .score .sv{font-size:28px}}
+  /* Chat flottant (attaquant) */
+  #chat-fab{position:fixed;bottom:18px;right:18px;z-index:60;width:54px;height:54px;border-radius:50%;
+    background:var(--accent);color:#fff;font-size:24px;border:0;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.4)}
+  #chat-fab:hover{background:#7d6ff0}
+  #chat-fab .badge{position:absolute;top:-3px;right:-3px;background:var(--red);color:#fff;font-size:11px;
+    font-weight:800;min-width:18px;height:18px;border-radius:9px;display:flex;align-items:center;justify-content:center;padding:0 4px}
+  #chat-panel{position:fixed;bottom:18px;right:18px;z-index:61;width:340px;max-width:92vw;height:440px;
+    background:var(--panel);border:1px solid var(--line);border-radius:14px;display:none;flex-direction:column;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.5)}
+  #chat-panel.open{display:flex}
+  #chat-head{background:#11142a;padding:10px 12px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--line)}
+  #chat-head b{font-size:14px}
+  #chat-head select{flex:1;background:#0E1020;color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:4px;font-size:12px}
+  #chat-head button{background:none;border:0;color:var(--muted);font-size:18px;cursor:pointer}
+  #chat-msgs{flex:1;overflow:auto;padding:10px;display:flex;flex-direction:column;gap:6px}
+  .cmsg{max-width:82%;padding:6px 10px;border-radius:12px;font-size:13px;line-height:1.35;word-break:break-word}
+  .cmsg.them{align-self:flex-start;background:#1b2140;color:var(--txt);border-bottom-left-radius:3px}
+  .cmsg.me{align-self:flex-end;background:var(--accent);color:#fff;border-bottom-right-radius:3px}
+  .cmsg .who{font-size:10px;font-weight:800;color:#9db4ff;margin-bottom:1px}
+  #chat-form{display:flex;gap:6px;padding:8px;border-top:1px solid var(--line)}
+  #chat-form input{flex:1;background:#0E1020;border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:8px}
+  #chat-form button{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:8px 12px;font-weight:700;cursor:pointer}
 </style>
 </head>
 <body>
@@ -317,6 +338,18 @@
       </div>
     </div>
   </div>
+</div>
+
+<!-- Chat flottant : l'attaquant peut parler aux autres joueurs (salon global) -->
+<button id="chat-fab" title="Chat">💬<span class="badge" id="chat-badge" style="display:none">0</span></button>
+<div id="chat-panel">
+  <div id="chat-head">
+    <b>💬 Chat</b>
+    <select id="chat-room"></select>
+    <button id="chat-close" title="Fermer">×</button>
+  </div>
+  <div id="chat-msgs"><p class="note" style="margin:8px">Chargement…</p></div>
+  <form id="chat-form"><input id="chat-input" placeholder="Message…" autocomplete="off" maxlength="1000" /><button type="submit">➤</button></form>
 </div>
 
 <script>
@@ -689,6 +722,49 @@ async function loadAuctions(){
   }catch(e){}
 }
 setInterval(loadAuctions, 3000); loadAuctions();
+
+// ===== Chat attaquant (salon global + salons accessibles) =====
+let chatActive = null, chatLastId = 0, chatUnseen = 0, chatOpen = false;
+function esc(s){ const d=document.createElement("div"); d.textContent = (s==null?"":String(s)); return d.innerHTML; }
+async function chatLoadRooms(){
+  try{
+    const d = await (await fetch("/api/chat/rooms")).json();
+    const rooms = d.rooms || []; const sel = $("chat-room"); const cur = sel.value;
+    sel.innerHTML = "";
+    rooms.forEach(r=>{ const o=document.createElement("option"); o.value=r.id; o.textContent=(r.kind==="global"?"🌐 ":"🔒 ")+r.name; sel.appendChild(o); });
+    if(chatActive==null && rooms.length){ chatActive = rooms[0].id; }
+    sel.value = cur || chatActive;
+  }catch(e){}
+}
+function chatRender(msgs){
+  const box = $("chat-msgs");
+  msgs.forEach(m=>{
+    const mine = m.author === MYNAME;
+    const div=document.createElement("div"); div.className="cmsg "+(mine?"me":"them");
+    div.innerHTML = (mine?"":'<div class="who">'+esc(m.author)+'</div>')+esc(m.body);
+    box.appendChild(div);
+    chatLastId = Math.max(chatLastId, m.id);
+    if(!chatOpen && !mine) chatUnseen++;
+  });
+  if(msgs.length) box.scrollTop = box.scrollHeight;
+  const b=$("chat-badge");
+  if(chatUnseen>0){ b.style.display="flex"; b.textContent = chatUnseen>9?"9+":chatUnseen; } else b.style.display="none";
+}
+async function chatPoll(){
+  if(chatActive==null) return;
+  try{
+    const d = await (await fetch("/api/chat/rooms/"+chatActive+"/messages?after="+chatLastId)).json();
+    if(d && d.messages && d.messages.length) chatRender(d.messages);
+    else if(chatLastId===0){ $("chat-msgs").innerHTML='<p class="note" style="margin:8px">Aucun message — lance la discussion !</p>'; }
+  }catch(e){}
+}
+$("chat-fab").onclick=()=>{ chatOpen=true; chatUnseen=0; $("chat-panel").classList.add("open"); $("chat-fab").style.display="none"; $("chat-badge").style.display="none"; };
+$("chat-close").onclick=()=>{ chatOpen=false; $("chat-panel").classList.remove("open"); $("chat-fab").style.display="block"; };
+$("chat-room").onchange=(e)=>{ chatActive=+e.target.value; chatLastId=0; $("chat-msgs").innerHTML=""; chatPoll(); };
+$("chat-form").onsubmit=async(e)=>{ e.preventDefault(); const t=$("chat-input").value.trim(); if(!t||chatActive==null) return; $("chat-input").value="";
+  try{ await fetch("/api/chat/rooms/"+chatActive+"/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({body:t})}); await chatPoll(); }catch(e){} };
+chatLoadRooms().then(()=>{ $("chat-msgs").innerHTML=""; chatPoll(); });
+setInterval(chatPoll, 2500); setInterval(chatLoadRooms, 15000);
 </script>
 </body>
 </html>
