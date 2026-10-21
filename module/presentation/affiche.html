@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Resilience Guard — Affiche</title>
+<style>
+  :root{
+    --ink:#eef1ff; --muted:#aab2dc; --accent:#8b7bff; --cyan:#48cbe9; --green:#3ad3a6; --amber:#eab23f;
+    --line:rgba(255,255,255,.12);
+    --grad:linear-gradient(120deg,#8b7bff 0%,#48cbe9 52%,#3ad3a6 100%);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#070912;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .stage{display:flex;justify-content:center;padding:24px}
+  .poster{
+    position:relative;width:210mm;min-height:297mm;overflow:hidden;color:var(--ink);
+    background:
+      radial-gradient(70% 40% at 18% 8%, rgba(139,123,255,.35) 0%, transparent 60%),
+      radial-gradient(60% 40% at 92% 22%, rgba(72,203,233,.28) 0%, transparent 60%),
+      radial-gradient(80% 50% at 50% 108%, rgba(58,211,166,.22) 0%, transparent 60%),
+      linear-gradient(180deg,#0c1024 0%,#0a0e1e 60%,#0b1328 100%);
+    padding:20mm 18mm;
+  }
+  /* decorative shield watermark */
+  .wm{position:absolute;right:-18mm;bottom:-10mm;font-size:150mm;line-height:1;opacity:.06;pointer-events:none}
+  .grid-lines{position:absolute;inset:0;background-image:
+      linear-gradient(rgba(255,255,255,.035) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(255,255,255,.035) 1px,transparent 1px);
+    background-size:18mm 18mm;mask-image:linear-gradient(180deg,transparent,black 30%,black 70%,transparent)}
+  .inner{position:relative;z-index:2;display:flex;flex-direction:column;min-height:257mm}
+
+  .top{display:flex;align-items:center;gap:10px}
+  .logo{font-size:26px}
+  .brand{font-weight:900;font-size:22px;letter-spacing:.3px}
+  .kicker{margin-left:auto;font-size:11px;font-weight:800;letter-spacing:.22em;text-transform:uppercase;
+    color:#d7dbff;border:1px solid var(--line);padding:7px 12px;border-radius:999px;background:rgba(255,255,255,.04)}
+
+  .hero{margin-top:14mm}
+  .eyebrow{display:inline-block;font-size:12px;font-weight:800;letter-spacing:.2em;text-transform:uppercase;
+    color:#0a0e1e;background:var(--grad);padding:7px 14px;border-radius:999px}
+  h1{font-size:46px;line-height:1.04;margin:14px 0 0;letter-spacing:-.5px;font-weight:900}
+  .grad{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .lead{margin-top:14px;font-size:17px;color:var(--muted);max-width:150mm;line-height:1.5}
+
+  .feats{margin-top:12mm;display:grid;grid-template-columns:1fr 1fr;gap:5mm}
+  .ft{display:flex;gap:12px;align-items:flex-start;background:rgba(255,255,255,.04);
+    border:1px solid var(--line);border-radius:14px;padding:12px 14px}
+  .ft .i{flex:none;width:40px;height:40px;border-radius:11px;display:flex;align-items:center;justify-content:center;
+    font-size:20px;background:rgba(139,123,255,.16);border:1px solid rgba(139,123,255,.4)}
+  .ft b{display:block;font-size:15px}
+  .ft span{font-size:12.5px;color:var(--muted)}
+
+  .cmd{margin-top:9mm;background:#05070f;border:1px solid var(--line);border-radius:14px;
+    padding:14px 16px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;color:#cfe6ff;overflow:hidden}
+  .cmd .lbl{font-family:system-ui;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+  .cmd .k{color:#b3a6ff} .cmd .s{color:#86e8c8}
+
+  .stats{margin-top:9mm;display:grid;grid-template-columns:repeat(3,1fr);gap:5mm}
+  .st{text-align:center;background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:14px;padding:14px}
+  .st .v{font-size:34px;font-weight:900;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .st .l{font-size:12px;color:var(--muted);margin-top:2px}
+
+  .cta{margin-top:auto;padding-top:9mm}
+  .ribbon{display:flex;align-items:center;gap:14px;background:var(--grad);color:#07101a;
+    border-radius:16px;padding:16px 20px}
+  .ribbon .big{font-size:19px;font-weight:900}
+  .ribbon .sm{font-size:13px;font-weight:700;opacity:.85}
+  .ribbon .right{margin-left:auto;text-align:right;font-weight:800;font-size:13px}
+  .foot{margin-top:7mm;display:flex;gap:12px;flex-wrap:wrap;font-size:11.5px;color:var(--muted)}
+  .foot .dot{opacity:.5}
+
+  @media print{
+    @page{size:A4 portrait;margin:0}
+    html,body{background:#0a0e1e}
+    .stage{padding:0}
+    .poster{width:210mm;min-height:297mm;box-shadow:none}
+    *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="poster">
+    <div class="grid-lines"></div>
+    <div class="wm">&#128737;&#65039;</div>
+    <div class="inner">
+
+      <div class="top">
+        <span class="logo">&#128737;&#65039;</span>
+        <span class="brand">Resilience Guard</span>
+        <span class="kicker">Sécurité &middot; Résilience</span>
+      </div>
+
+      <div class="hero">
+        <span class="eyebrow">&#9889; Plug-and-protect</span>
+        <h1>Protégez <span class="grad">n'importe quelle<br>application</span><br>sans toucher à son code.</h1>
+        <p class="lead">Une passerelle se pose devant votre app et lui ajoute pare-feu, détection d'attaque
+          par IA, remédiation autonome, supervision et haute disponibilité. En une seule commande.</p>
+      </div>
+
+      <div class="feats">
+        <div class="ft"><div class="i">&#128737;&#65039;</div><div><b>Pare-feu WAF</b><span>SQLi / XSS bloqués en 403</span></div></div>
+        <div class="ft"><div class="i">&#129504;</div><div><b>Détection IA</b><span>anomalies en temps réel (ML)</span></div></div>
+        <div class="ft"><div class="i">&#9881;&#65039;</div><div><b>Remédiation auto</b><span>bouclier anti-DoS, zéro-touch</span></div></div>
+        <div class="ft"><div class="i">&#128260;</div><div><b>Haute dispo</b><span>bascule &amp; retour automatiques</span></div></div>
+        <div class="ft"><div class="i">&#128202;</div><div><b>Observabilité</b><span>KPI, Grafana, logs, cockpit</span></div></div>
+        <div class="ft"><div class="i">&#129302;</div><div><b>Assistant IA</b><span>RAG local, procédures</span></div></div>
+      </div>
+
+      <div class="cmd">
+        <div class="lbl">Installation en 1 commande</div>
+        <span class="k">PROTECTED_UPSTREAM</span>=<span class="s">http://mon-app:8000</span> docker compose \<br>
+        &nbsp;&nbsp;-f docker-compose.module.yml up -d
+      </div>
+
+      <div class="stats">
+        <div class="st"><div class="v">1</div><div class="l">commande</div></div>
+        <div class="st"><div class="v">7</div><div class="l">capacités défensives</div></div>
+        <div class="st"><div class="v">0</div><div class="l">ligne de code touchée</div></div>
+      </div>
+
+      <div class="cta">
+        <div class="ribbon">
+          <div>
+            <div class="big">Déployez la défense. Gardez votre code.</div>
+            <div class="sm">Cockpit, pare-feu, IA et HA prêts à l'emploi.</div>
+          </div>
+          <div class="right">Projet<br>Resilience-Alpha</div>
+        </div>
+        <div class="foot">
+          <span>&#128737;&#65039; Resilience Guard — module de sécurité réutilisable</span>
+          <span class="dot">&middot;</span>
+          <span>Données &amp; attaques fictives — usage pédagogique / labo</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+</body>
+</html>
