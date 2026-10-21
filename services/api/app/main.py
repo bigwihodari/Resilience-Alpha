@@ -60,6 +60,7 @@ WIN_TARGET = float(os.environ.get("WIN_TARGET", "1000000000"))   # 1 milliard
 game_winner = {"name": None, "camp": None, "networth": 0.0, "at": None}
 # Compte "banque" (coffre) : cible de hack haut-risque, exclu du jeu/leaderboard.
 BANK_USER = os.environ.get("BANK_USER", "trafficbot")
+BANK_BALANCE = float(os.environ.get("BANK_BALANCE", "5000000000"))  # coffre de la banque : plusieurs milliards
 
 # ---- Shop & upgrades (jeu idle) : coûts EXPONENTIELS cost = base * growth^niveau ----
 # Améliorations GLOBALES (compte). La PRODUCTION se booste par LIVRET (bouton
@@ -209,8 +210,8 @@ def _dino_mult(m) -> int:
 HEIST_BANK_MAX = float(os.environ.get("HEIST_BANK_MAX", "50000"))    # plafond/coup sur la banque
 HEIST_CLIENT_MAX = float(os.environ.get("HEIST_CLIENT_MAX", "2000"))  # plafond/coup sur un client
 HEIST_PVP_MAX = float(os.environ.get("HEIST_PVP_MAX", "5000"))        # plafond/coup sur un attaquant
-CATCH_BANK_BASE = float(os.environ.get("CATCH_BANK_BASE", "0.35"))
-CATCH_BANK_K = float(os.environ.get("CATCH_BANK_K", "0.55"))          # * (montant / plafond banque)
+CATCH_BANK_BASE = float(os.environ.get("CATCH_BANK_BASE", "0.72"))   # banque = IA TRÈS alerte (base élevée)
+CATCH_BANK_K = float(os.environ.get("CATCH_BANK_K", "0.7"))          # * (montant / plafond banque)
 CATCH_CLIENT_BASE = float(os.environ.get("CATCH_CLIENT_BASE", "0.06"))
 CATCH_CLIENT_K_AMT = float(os.environ.get("CATCH_CLIENT_K_AMT", "0.30"))   # * (montant / plafond client)
 CATCH_CLIENT_K_FREQ = float(os.environ.get("CATCH_CLIENT_K_FREQ", "0.04"))  # * vols clients récents
@@ -754,8 +755,12 @@ def startup():
     if ROLE == "primary":
         try:
             with engine().begin() as c:
-                c.execute(text("UPDATE users SET role='bank' WHERE username=:u AND role='client'"),
+                c.execute(text("UPDATE users SET role='bank' WHERE username=:u AND role IN ('client','bank')"),
                           {"u": BANK_USER})
+                # Coffre de la banque : plusieurs milliards (on remplit si en dessous).
+                c.execute(text("UPDATE accounts SET balance=:bal "
+                               "WHERE user_id=(SELECT id FROM users WHERE username=:u) AND balance < :bal"),
+                          {"u": BANK_USER, "bal": BANK_BALANCE})
         except Exception:  # noqa: BLE001
             pass
     # Livret initial pour la cible du jeu (fuite « présence d'un livret » + vol épargne).
@@ -2500,8 +2505,11 @@ def game_recon(request: Request, x_player: str = Header(default=None)):
         raise HTTPException(409, "l'IA analyse tout le trafic — lance des attaques (vecteurs) "
                                  "pour la distraire AVANT de sonder")
     GAME_RECON.inc()
-    # Suspicion atténuée quand l'IA est distraite par la charge d'attaque.
-    _bump_suspicion(actor, 0.04 * (1 - 0.7 * d), _actor_ip(request), "reconnaissance")
+    # Suspicion atténuée quand l'IA est distraite — mais sonder la BANQUE est bien plus
+    # risqué (coffre surveillé en continu) : montée de suspicion ~3x et peu atténuée.
+    _on_bank = (game_state.get("victim") == BANK_USER)
+    _recon_delta = (0.12 * (1 - 0.2 * d)) if _on_bank else (0.04 * (1 - 0.7 * d))
+    _bump_suspicion(actor, _recon_delta, _actor_ip(request), "reconnaissance banque" if _on_bank else "reconnaissance")
     _maybe_block(actor, is_primary, "énumération repérée par l'IA")
     with Session(engine()) as s:
         clients = s.execute(
@@ -2805,10 +2813,11 @@ def game_heist(body: HeistIn, request: Request, x_player: str = Header(default=N
             raise HTTPException(400, "cible non volable")
     # P4 : la suspicion monte (plus fort si cramé) puis tirage de blocage isolé.
     caught = bool(res.get("caught"))
-    delta = {"bank": 0.25, "client": 0.12, "attacker": 0.08}.get(tt, 0.12)
+    delta = {"bank": 0.55, "client": 0.12, "attacker": 0.08}.get(tt, 0.12)
     if caught and tt != "bank":  # la banque cramée bloque déjà par elle-même
         delta += 0.3
-    delta *= (1 - 0.6 * distraction)  # l'IA distraite détecte moins le vol
+    # L'IA distraite détecte moins — SAUF sur la banque, surveillée en permanence.
+    delta *= (1 - (0.15 if tt == "bank" else 0.6) * distraction)
     _bump_suspicion(actor, delta, _actor_ip(request), f"vol {tt}" + (" (cramé)" if caught else ""))
     blocked, p = _maybe_block(actor, is_primary, "activité de vol suspecte")
     res["suspicion"] = round(_susp(actor)["score"], 3)

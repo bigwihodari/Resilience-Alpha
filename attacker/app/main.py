@@ -157,6 +157,11 @@ def chat_post(room_id: int, body: dict = Body(default={})):
     return game.chat_post(room_id, body.get("body", ""))
 
 
+@app.get("/api/game/targets")
+def game_targets():
+    return game.targets()
+
+
 @app.get("/api/game/auctions")
 def game_auctions():
     return game.auctions()

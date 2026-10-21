@@ -607,6 +607,10 @@ class GameController:
         self._event(f"Phishing refusé : {self._detail(r)}", "error")
         return {"error": self._detail(r)}
 
+    def targets(self):
+        """Cibles possibles : clients, la BANQUE (coffre), autres attaquants."""
+        return self._get("/api/game/targets")
+
     def auctions(self):
         """Enchères officielles en cours — l'attaquant peut y miser son butin (PvP)."""
         return self._get("/api/auctions")
