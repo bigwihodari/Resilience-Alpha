@@ -29,6 +29,7 @@ export default function Dashboard() {
   const [quizzes, setQuizzes] = useState([]);
   const [nowTick, setNowTick] = useState(Date.now());
   const auctionsAt = useRef(Date.now());
+  const refreshTimer = useRef(null);
   // paiement
   const [txs, setTxs] = useState([]);
   const [favs, setFavs] = useState([]);
@@ -74,7 +75,7 @@ export default function Dashboard() {
             if (d.type === "auction" && d.op === "open") flash("🔔 Nouvelle enchère dans le Marché !");
             if (d.type === "quiz" && d.op === "open") flash("🧠 Nouveau quiz — réponds vite !");
             if (d.type === "quiz" && d.op === "win" && d.winner && d.winner !== me) flash(`🧠 Quiz remporté par ${d.winner}`, "err");
-            if (["tx", "win", "mail", "auction", "quiz"].includes(d.type)) refresh();
+            if (["tx", "win", "mail", "auction", "quiz"].includes(d.type)) refreshSoon(600);
           } catch { /* */ }
         };
         ws.onclose = () => { clearInterval(ping); if (!stopped) retry = setTimeout(connect, 2000); };
@@ -82,10 +83,32 @@ export default function Dashboard() {
       } catch { retry = setTimeout(connect, 2000); }
     };
     connect();
-    return () => { stopped = true; clearInterval(poll); clearInterval(tick); clearInterval(retry); clearInterval(ping); try { ws && ws.close(); } catch { /* */ } };
+    return () => { stopped = true; clearInterval(poll); clearInterval(tick); clearInterval(retry); clearInterval(ping); clearTimeout(refreshTimer.current); try { ws && ws.close(); } catch { /* */ } };
   }, []);
 
-  async function act(fn, ok) { try { const r = await fn(); flash(typeof ok === "function" ? ok(r) : ok); await refresh(); } catch (e) { flash(e.message, "err"); } }
+  // Rafraîchissement DÉBOUNCÉ : les clics rapides (spam d'upgrade) et les events WS
+  // ne déclenchent qu'UN seul refresh groupé -> fini le flood de requêtes et les 502.
+  function refreshSoon(delay = 350) {
+    clearTimeout(refreshTimer.current);
+    refreshTimer.current = setTimeout(() => { refresh(); }, delay);
+  }
+  // `apply` (optionnel) met à jour l'état localement depuis la réponse pour un retour
+  // instantané pendant le spam, sans attendre le refresh groupé.
+  async function act(fn, ok, apply) {
+    try {
+      const r = await fn();
+      if (apply) apply(r);
+      if (ok) flash(typeof ok === "function" ? ok(r) : ok);
+      refreshSoon();
+    } catch (e) { flash(e.message, "err"); }
+  }
+  // Maj optimiste du solde courant (fortune corrigée au prochain refresh groupé).
+  const patchCourant = (bal) => { if (bal != null) setNw((p) => (p ? { ...p, courant: bal } : p)); };
+  // Montant saisi pour un livret (champ `amt-<clé>`), au clic. Défaut 100, min 1.
+  const amtOf = (k) => { const el = document.getElementById("amt-" + k); return Math.max(1, Math.floor(parseFloat(el && el.value) || 100)); };
+  const applyPrincipalBoost = (r) => { setLiv((p) => ({ ...p, principal: { ...p.principal, level: r.level, rate: r.rate, upgrade_cost: r.next_cost } })); patchCourant(r.balance); };
+  const applyLivretBoost = (r) => { setLiv((p) => ({ ...p, livrets: p.livrets.map((x) => (x.id === r.id ? { ...x, level: r.level, rate: r.rate, upgrade_cost: r.next_cost } : x)) })); patchCourant(r.balance); };
+  const applyShopBuy = (r) => { setShop((p) => ({ ...p, items: p.items.map((x) => (x.ukey === r.ukey ? { ...x, level: r.level, next_cost: r.next_cost } : x)) })); patchCourant(r.balance); };
 
   async function doSearch(v) { setQ(v); if (v.trim().length < 1) { setResults([]); return; } setResults(await searchUsers(v.trim())); }
   function choose(u) { setRecipient(u); setQ(u); setResults([]); }
@@ -190,10 +213,11 @@ export default function Dashboard() {
                 <div className="text-xs text-green-600 font-semibold">+{((liv.principal.rate || 0) * 100).toFixed(2)} % / {liv.interval}s</div>
               </div>
               <div className="text-3xl font-extrabold text-green-700 mt-1">{euro(liv.principal.balance)}</div>
-              <div className="flex flex-wrap gap-2 mt-2">
-                <button onClick={() => act(() => savingsDeposit(100), "Dépôt de 100 €")} className="text-xs bg-green-600 text-white font-semibold px-3 py-1.5 rounded-lg hover:bg-green-700">Déposer 100</button>
-                <button onClick={() => act(() => savingsWithdraw(100), "Retrait de 100 €")} className="text-xs bg-ink text-white font-semibold px-3 py-1.5 rounded-lg hover:bg-accent">Retirer 100</button>
-                <button onClick={() => act(() => savingsUpgrade(), (r) => `Taux boosté à +${(r.rate * 100).toFixed(2)} %`)} className="text-xs bg-accent text-white font-semibold px-3 py-1.5 rounded-lg hover:bg-ink">⬆ Booster ({euro(liv.principal.upgrade_cost || 0)})</button>
+              <div className="flex flex-wrap items-center gap-2 mt-2">
+                <input id="amt-principal" type="number" min="1" defaultValue="100" className="w-24 border border-lav rounded-lg px-2 py-1.5 text-sm" title="Montant à déposer / retirer" />
+                <button onClick={() => { const a = amtOf("principal"); act(() => savingsDeposit(a), `Dépôt de ${euro(a)}`); }} className="text-xs bg-green-600 text-white font-semibold px-3 py-1.5 rounded-lg hover:bg-green-700">Déposer</button>
+                <button onClick={() => { const a = amtOf("principal"); act(() => savingsWithdraw(a), `Retrait de ${euro(a)}`); }} className="text-xs bg-ink text-white font-semibold px-3 py-1.5 rounded-lg hover:bg-accent">Retirer</button>
+                <button onClick={() => act(() => savingsUpgrade(), (r) => `Taux boosté à +${(r.rate * 100).toFixed(2)} %`, applyPrincipalBoost)} className="text-xs bg-accent text-white font-semibold px-3 py-1.5 rounded-lg hover:bg-ink">⬆ Booster ({euro(liv.principal.upgrade_cost || 0)})</button>
               </div>
             </div>
             {liv.livrets.map((lv) => (
@@ -203,10 +227,11 @@ export default function Dashboard() {
                   <div className="text-xs text-green-600 font-semibold">+{(lv.rate * 100).toFixed(2)} % / {liv.interval}s</div>
                 </div>
                 <div className="text-2xl font-extrabold text-green-700 mt-1">{euro(lv.balance)}</div>
-                <div className="flex flex-wrap gap-2 mt-2">
-                  <button onClick={() => act(() => livretDeposit(lv.id, 100), "Dépôt de 100 €")} className="text-xs bg-green-600 text-white font-semibold px-3 py-1.5 rounded-lg hover:bg-green-700">Déposer 100</button>
-                  <button onClick={() => act(() => livretWithdraw(lv.id, 100), "Retrait de 100 €")} className="text-xs bg-ink text-white font-semibold px-3 py-1.5 rounded-lg hover:bg-accent">Retirer 100</button>
-                  <button onClick={() => act(() => livretUpgrade(lv.id), (r) => `Taux boosté à +${(r.rate * 100).toFixed(2)} %`)} className="text-xs bg-accent text-white font-semibold px-3 py-1.5 rounded-lg hover:bg-ink">⬆ Booster ({euro(lv.upgrade_cost)})</button>
+                <div className="flex flex-wrap items-center gap-2 mt-2">
+                  <input id={`amt-${lv.id}`} type="number" min="1" defaultValue="100" className="w-24 border border-lav rounded-lg px-2 py-1.5 text-sm" title="Montant à déposer / retirer" />
+                  <button onClick={() => { const a = amtOf(lv.id); act(() => livretDeposit(lv.id, a), `Dépôt de ${euro(a)}`); }} className="text-xs bg-green-600 text-white font-semibold px-3 py-1.5 rounded-lg hover:bg-green-700">Déposer</button>
+                  <button onClick={() => { const a = amtOf(lv.id); act(() => livretWithdraw(lv.id, a), `Retrait de ${euro(a)}`); }} className="text-xs bg-ink text-white font-semibold px-3 py-1.5 rounded-lg hover:bg-accent">Retirer</button>
+                  <button onClick={() => act(() => livretUpgrade(lv.id), (r) => `Taux boosté à +${(r.rate * 100).toFixed(2)} %`, applyLivretBoost)} className="text-xs bg-accent text-white font-semibold px-3 py-1.5 rounded-lg hover:bg-ink">⬆ Booster ({euro(lv.upgrade_cost)})</button>
                 </div>
               </div>
             ))}
@@ -222,7 +247,7 @@ export default function Dashboard() {
                 {shop.items.map((it) => (
                   <div key={it.ukey} className="flex items-center gap-3 border-b border-lavsoft pb-2">
                     <div className="flex-1"><div className="font-semibold text-sm text-ink">{it.label} <span className="text-xs text-ink/40">niv {it.level}</span></div><div className="text-xs text-ink/50">{it.desc}</div></div>
-                    <button onClick={() => act(() => shopBuy(it.ukey), (r) => `${it.label} niv ${r.level}`)} className="text-xs bg-accent text-white font-semibold px-3 py-1.5 rounded-lg hover:bg-ink whitespace-nowrap">{euro(it.next_cost)}</button>
+                    <button onClick={() => act(() => shopBuy(it.ukey), (r) => `${it.label} niv ${r.level}`, applyShopBuy)} className="text-xs bg-accent text-white font-semibold px-3 py-1.5 rounded-lg hover:bg-ink whitespace-nowrap">{euro(it.next_cost)}</button>
                   </div>
                 ))}
               </div>
