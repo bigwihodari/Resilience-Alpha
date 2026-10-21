@@ -51,8 +51,10 @@ services:
       ADMIN_TOKEN: ${ADMIN_TOKEN:-orchestrator-admin-token}
       ROLE: ${ROLE:-primary}
       HA_NAME: ${HA_NAME:-PRINCIPAL}
-      SAVINGS_RATE: ${SAVINGS_RATE:-0.01}
+      SAVINGS_RATE: ${SAVINGS_RATE:-0.001}
       SAVINGS_INTERVAL: ${SAVINGS_INTERVAL:-30}
+      LIVRET_MAX: ${LIVRET_MAX:-150000}
+      WIN_TARGET: ${WIN_TARGET:-1000000000}
       REPL_TOKEN: ${REPL_TOKEN:-repl-secret}
       # Jeu de hacker : cible, plafonds du vol, dégradé/bascule (OFF par défaut).
       GAME_VICTIM: ${GAME_VICTIM:-bob}
