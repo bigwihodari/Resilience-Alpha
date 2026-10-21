@@ -14,6 +14,7 @@ Le modèle est persisté sur disque : pas de ré-apprentissage à chaque redéma
 import os
 import time
 import threading
+from collections import deque
 
 import numpy as np
 import requests
@@ -28,6 +29,13 @@ INTERVAL = float(os.environ.get("INTERVAL", "5"))
 WARMUP = int(os.environ.get("WARMUP_SAMPLES", "30"))
 CONTAM = float(os.environ.get("CONTAMINATION", "0.02"))
 DIST_FLAG = float(os.environ.get("DIST_FLAG", "8"))   # distance (σ) => anomalie
+# Ré-apprentissage GLISSANT : la « normale » suit le trafic récent. Sinon, un modèle
+# entraîné pendant un pic (ex. tests/attaques) considère ensuite le trafic calme comme
+# anormal (faux positif persistant). On ré-apprend sur une fenêtre glissante, mais PAS
+# tant qu'une anomalie est en cours (pour ne pas « avaler » une vraie attaque soutenue).
+RETRAIN_EVERY = float(os.environ.get("RETRAIN_EVERY", "90"))    # s entre deux ré-apprentissages glissants
+RETRAIN_WINDOW = int(os.environ.get("RETRAIN_WINDOW", "40"))    # échantillons du baseline glissant
+CALM_RATE = float(os.environ.get("CALM_RATE", "20"))           # req/s en dessous desquelles on peut ré-apprendre
 MODEL_PATH = os.environ.get("MODEL_PATH", "/app/model/detector.joblib")
 
 # Features = débits (req/s) : signaux stables et directement comparables.
@@ -51,6 +59,7 @@ state = {
     "last_update": None, "reason": "initialisation",
 }
 baseline = []
+recent = deque(maxlen=max(RETRAIN_WINDOW, WARMUP))   # fenêtre glissante pour le ré-apprentissage
 model = None          # Isolation Forest
 mu = None             # moyenne par feature (normale)
 sd = None             # écart-type par feature (normale)
@@ -122,8 +131,14 @@ def loop():
             state["trained"] = True
             state["reason"] = "modèle chargé (persisté)"
         TRAINEDG.set(1)
+    last_fit = time.time()
     while True:
         feats = sample()
+        recent.append(feats)
+        # « Calme » jugé sur le DÉBIT BRUT (pas sur l'avis du modèle, qui peut être
+        # faussé) : req_total < CALM_RATE -> on peut ré-aligner la normale sans risquer
+        # d'avaler un vrai flood. Casse le faux positif persistant après un pic/test.
+        cur_rate = feats[0] if feats else 0.0
         with lock:
             state["features"] = dict(zip(FEATURES, [round(x, 3) for x in feats]))
             state["last_update"] = time.time()
@@ -136,23 +151,34 @@ def loop():
                     save_model()
                     state["trained"] = True
                     state["reason"] = "modèle entraîné"
+                    last_fit = time.time()
                     TRAINEDG.set(1)
             else:
                 d = distance(feats)
                 excess = max(0.0, d - base_d_mean)
                 score = min(100.0, excess * 6.0)
-                # Flag piloté par la distance standardisée (fiable sur gros écarts).
-                # L'Isolation Forest est conservé en corroboration (exposé en info).
                 try:
                     if_outlier = int(model.predict(((np.asarray(feats) - mu) / sd).reshape(1, -1))[0]) == -1
                 except Exception:
                     if_outlier = False
                 is_anom = excess > DIST_FLAG
+                # Ré-apprentissage GLISSANT : si le débit brut est calme (pas de flood) et
+                # que l'intervalle est écoulé, on réaligne la « normale » sur le trafic récent.
+                if (cur_rate < CALM_RATE and (time.time() - last_fit) >= RETRAIN_EVERY
+                        and len(recent) >= WARMUP):
+                    fit(list(recent))
+                    save_model()
+                    last_fit = time.time()
+                    state["reason"] = "normale ré-apprise (glissant)"
+                    d = distance(feats)
+                    excess = max(0.0, d - base_d_mean)
+                    score = min(100.0, excess * 6.0)
+                    is_anom = excess > DIST_FLAG
                 state["if_outlier"] = if_outlier
                 state["distance"] = round(d, 2)
                 state["score"] = round(score, 1)
                 state["is_anomaly"] = bool(is_anom)
-                state["reason"] = "anomalie detectee" if is_anom else "normal"
+                state["reason"] = "anomalie detectee" if is_anom else state.get("reason", "normal")
                 ANOM.set(score)
                 FLAG.set(1 if is_anom else 0)
         time.sleep(INTERVAL)
