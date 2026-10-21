@@ -156,6 +156,12 @@
   #chat-head b{font-size:14px}
   #chat-head select{flex:1;background:#0E1020;color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:4px;font-size:12px}
   #chat-head button{background:none;border:0;color:var(--muted);font-size:18px;cursor:pointer}
+  #chat-head #chat-new:hover,#chat-head #chat-close:hover{color:var(--txt)}
+  #chat-create,#chat-addmember{display:none;gap:6px;padding:8px;border-bottom:1px solid var(--line);background:#11142a}
+  #chat-create.open{display:flex;flex-direction:column}
+  #chat-addmember.open{display:flex}
+  #chat-create input,#chat-addmember input{background:#0E1020;border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:7px;flex:1}
+  #chat-create button,#chat-addmember button{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:7px 10px;font-weight:700;cursor:pointer}
   #chat-msgs{flex:1;overflow:auto;padding:10px;display:flex;flex-direction:column;gap:6px}
   .cmsg{max-width:82%;padding:6px 10px;border-radius:12px;font-size:13px;line-height:1.35;word-break:break-word}
   .cmsg.them{align-self:flex-start;background:#1b2140;color:var(--txt);border-bottom-left-radius:3px}
@@ -354,8 +360,15 @@
   <div id="chat-head">
     <b>💬 Chat</b>
     <select id="chat-room"></select>
+    <button id="chat-new" title="Nouveau salon privé">＋</button>
     <button id="chat-close" title="Fermer">×</button>
   </div>
+  <div id="chat-create">
+    <input id="cr-name" placeholder="Nom du salon privé" maxlength="64" />
+    <input id="cr-members" placeholder="Membres (ex: Théo,hodari)" />
+    <button id="cr-go">Créer le salon privé</button>
+  </div>
+  <div id="chat-addmember"><input id="am-name" placeholder="ajouter un membre…" /><button id="am-go">+ membre</button></div>
   <div id="chat-msgs"><p class="note" style="margin:8px">Chargement…</p></div>
   <form id="chat-form"><input id="chat-input" placeholder="Message…" autocomplete="off" maxlength="1000" /><button type="submit">➤</button></form>
 </div>
@@ -760,17 +773,23 @@ async function loadAuctions(){
 }
 setInterval(loadAuctions, 3000); loadAuctions();
 
-// ===== Chat attaquant (salon global + salons accessibles) =====
-let chatActive = null, chatLastId = 0, chatUnseen = 0, chatOpen = false;
+// ===== Chat attaquant (salon global + salons privés créés par l'attaquant) =====
+let chatActive = null, chatLastId = 0, chatUnseen = 0, chatOpen = false, chatRoomsArr = [];
 function esc(s){ const d=document.createElement("div"); d.textContent = (s==null?"":String(s)); return d.innerHTML; }
+function chatUpdateAddMember(){
+  const r = chatRoomsArr.find(x=>String(x.id)===String(chatActive));
+  const canAdd = !!(r && r.kind!=="global" && r.owner===MYNAME);
+  $("chat-addmember").classList.toggle("open", canAdd);
+}
 async function chatLoadRooms(){
   try{
     const d = await (await fetch("/api/chat/rooms")).json();
-    const rooms = d.rooms || []; const sel = $("chat-room"); const cur = sel.value;
+    const rooms = d.rooms || []; chatRoomsArr = rooms; const sel = $("chat-room"); const cur = sel.value;
     sel.innerHTML = "";
     rooms.forEach(r=>{ const o=document.createElement("option"); o.value=r.id; o.textContent=(r.kind==="global"?"🌐 ":"🔒 ")+r.name; sel.appendChild(o); });
     if(chatActive==null && rooms.length){ chatActive = rooms[0].id; }
     sel.value = cur || chatActive;
+    chatUpdateAddMember();
   }catch(e){}
 }
 function chatRender(msgs){
@@ -797,9 +816,23 @@ async function chatPoll(){
 }
 $("chat-fab").onclick=()=>{ chatOpen=true; chatUnseen=0; $("chat-panel").classList.add("open"); $("chat-fab").style.display="none"; $("chat-badge").style.display="none"; };
 $("chat-close").onclick=()=>{ chatOpen=false; $("chat-panel").classList.remove("open"); $("chat-fab").style.display="block"; };
-$("chat-room").onchange=(e)=>{ chatActive=+e.target.value; chatLastId=0; $("chat-msgs").innerHTML=""; chatPoll(); };
+$("chat-room").onchange=(e)=>{ chatActive=+e.target.value; chatLastId=0; $("chat-msgs").innerHTML=""; chatUpdateAddMember(); chatPoll(); };
 $("chat-form").onsubmit=async(e)=>{ e.preventDefault(); const t=$("chat-input").value.trim(); if(!t||chatActive==null) return; $("chat-input").value="";
   try{ await fetch("/api/chat/rooms/"+chatActive+"/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({body:t})}); await chatPoll(); }catch(e){} };
+// Créer un salon privé (l'attaquant en est propriétaire et membre)
+$("chat-new").onclick=()=>{ $("chat-create").classList.toggle("open"); };
+$("cr-go").onclick=async()=>{
+  const name=$("cr-name").value.trim(); if(!name) return;
+  const members=$("cr-members").value.split(",").map(s=>s.trim()).filter(Boolean);
+  try{
+    const d=await (await fetch("/api/chat/rooms",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,members})})).json();
+    if(d && d.id){ $("cr-name").value=""; $("cr-members").value=""; $("chat-create").classList.remove("open");
+      await chatLoadRooms(); chatActive=d.id; chatLastId=0; $("chat-room").value=d.id; $("chat-msgs").innerHTML=""; chatUpdateAddMember(); chatPoll(); }
+  }catch(e){}
+};
+// Ajouter un membre au salon privé courant
+$("am-go").onclick=async()=>{ const m=$("am-name").value.trim(); if(!m||chatActive==null) return; $("am-name").value="";
+  try{ await fetch("/api/chat/rooms/"+chatActive+"/members",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({member:m})}); }catch(e){} };
 chatLoadRooms().then(()=>{ $("chat-msgs").innerHTML=""; chatPoll(); });
 setInterval(chatPoll, 2500); setInterval(chatLoadRooms, 15000);
 </script>

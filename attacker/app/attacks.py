@@ -632,6 +632,22 @@ class GameController:
         """Salons de discussion accessibles à l'attaquant (au moins le salon global)."""
         return self._get("/api/chat/rooms")
 
+    def chat_create_room(self, name, members):
+        try:
+            r = requests.post(f"{self.target}/api/chat/rooms",
+                              json={"name": name, "members": members or []}, headers=self._h(), timeout=6)
+        except Exception as e:  # noqa: BLE001
+            return {"error": str(e)}
+        return r.json() if r.status_code == 200 else {"error": self._detail(r)}
+
+    def chat_add_member(self, room_id, member):
+        try:
+            r = requests.post(f"{self.target}/api/chat/rooms/{room_id}/members",
+                              json={"member": member}, headers=self._h(), timeout=6)
+        except Exception as e:  # noqa: BLE001
+            return {"error": str(e)}
+        return r.json() if r.status_code == 200 else {"error": self._detail(r)}
+
     def chat_messages(self, room_id, after=0):
         return self._get(f"/api/chat/rooms/{room_id}/messages?after={after}")
 

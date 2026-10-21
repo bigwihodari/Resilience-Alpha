@@ -147,6 +147,16 @@ def chat_rooms():
     return game.chat_rooms()
 
 
+@app.post("/api/chat/rooms")
+def chat_create(body: dict = Body(default={})):
+    return game.chat_create_room(body.get("name", ""), body.get("members", []))
+
+
+@app.post("/api/chat/rooms/{room_id}/members")
+def chat_add_member(room_id: int, body: dict = Body(default={})):
+    return game.chat_add_member(room_id, body.get("member", ""))
+
+
 @app.get("/api/chat/rooms/{room_id}/messages")
 def chat_messages(room_id: int, after: int = 0):
     return game.chat_messages(room_id, after)
