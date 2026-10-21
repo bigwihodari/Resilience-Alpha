@@ -42,11 +42,19 @@ export default function Dashboard() {
   async function refresh() {
     const [n, l, lv, sh, mb, au, qz, tx, fv] = await Promise.all([
       getNetworth(), getLeaderboard(), getLivrets(), getShop(), getMail(), getAuctions(), getQuizzes(),
-      listTx().catch(() => []), listFavorites().catch(() => []),
+      listTx().catch(() => undefined), listFavorites().catch(() => undefined),
     ]);
-    if (n) setNw(n); if (l) setLb(l); if (lv) setLiv(lv); if (sh) setShop(sh);
-    setMail(mb || []); setAuctions(au || []); auctionsAt.current = Date.now();
-    setQuizzes(qz || []); setTxs(tx || []); setFavs(fv || []);
+    // Chaque setState n'écrase l'état QUE si l'appel a réussi (valeur définie).
+    // Un échec transitoire (502) laisse la dernière donnée affichée -> pas de clignotement.
+    if (n) setNw(n);
+    if (l) setLb(l);
+    if (lv) setLiv(lv);
+    if (sh) setShop(sh);
+    if (mb) setMail(mb);
+    if (au) { setAuctions(au); auctionsAt.current = Date.now(); }
+    if (qz) setQuizzes(qz);
+    if (tx) setTxs(tx);
+    if (fv) setFavs(fv);
   }
 
   useEffect(() => {

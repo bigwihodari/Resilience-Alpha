@@ -47,32 +47,35 @@ export const savingsDeposit = (amount) => jpost("/api/savings/deposit", { amount
 export const savingsWithdraw = (amount) => jpost("/api/savings/withdraw", { amount }, authH());
 
 // ---- Jeu idle : fortune, livrets, shop, leaderboard, mail, enchères, quiz, chat, dino ----
-async function jget(path, fallback) {
+// IMPORTANT : en cas d'échec réseau (502/timeout transitoire sur un poste chargé), on
+// renvoie `undefined` — PAS un objet vide. Le Dashboard garde alors la dernière donnée
+// connue au lieu de « clignoter » (livrets/cartes qui disparaissent puis réapparaissent).
+async function jget(path) {
   try {
     const r = await fetch(path, { headers: authH(), cache: "no-store" });
-    if (handle401(r.status, path)) return fallback;
-    if (!r.ok) return fallback;
-    return r.json();
-  } catch { return fallback; }
+    if (handle401(r.status, path)) return undefined;
+    if (!r.ok) return undefined;
+    return await r.json();
+  } catch { return undefined; }
 }
-export const getNetworth = () => jget("/api/me/networth", null);
-export const getLeaderboard = () => jget("/api/leaderboard", { board: [], target: 1000000, winner: null });
+export const getNetworth = () => jget("/api/me/networth");
+export const getLeaderboard = () => jget("/api/leaderboard");
 // Livrets
-export const getLivrets = () => jget("/api/livrets", { principal: { balance: 0, rate: 0 }, livrets: [], interval: 30 });
+export const getLivrets = () => jget("/api/livrets");
 export const createLivret = (name) => jpost("/api/livrets", { name }, authH());
 export const livretDeposit = (id, amount) => jpost(`/api/livrets/${id}/deposit`, { amount }, authH());
 export const livretWithdraw = (id, amount) => jpost(`/api/livrets/${id}/withdraw`, { amount }, authH());
 export const livretUpgrade = (id) => jpost(`/api/livrets/${id}/upgrade`, {}, authH());
 export const savingsUpgrade = () => jpost("/api/savings/upgrade", {}, authH());
 // Shop
-export const getShop = () => jget("/api/shop", { items: [] });
+export const getShop = () => jget("/api/shop");
 export const shopBuy = (ukey) => jpost("/api/shop/buy", { ukey }, authH());
-// Mailbox / enchères / quiz
-export async function getMail() { const r = await jget("/api/mail", { mail: [] }); return r.mail || []; }
+// Mailbox / enchères / quiz — renvoient undefined si l'appel échoue (garder l'ancien état)
+export async function getMail() { const r = await jget("/api/mail"); return r ? (r.mail || []) : undefined; }
 export const markMailRead = (id) => jpost(`/api/mail/${id}/read`, {}, authH());
-export async function getAuctions() { const r = await jget("/api/auctions", { auctions: [] }); return r.auctions || []; }
+export async function getAuctions() { const r = await jget("/api/auctions"); return r ? (r.auctions || []) : undefined; }
 export const bidAuction = (id, amount) => jpost(`/api/auctions/${id}/bid`, { amount }, authH());
-export async function getQuizzes() { const r = await jget("/api/quizzes", { quizzes: [] }); return r.quizzes || []; }
+export async function getQuizzes() { const r = await jget("/api/quizzes"); return r ? (r.quizzes || []) : undefined; }
 export const answerQuiz = (id, answer) => jpost(`/api/quizzes/${id}/answer`, { answer }, authH());
 // Chat
 export async function getRooms() { const r = await jget("/api/chat/rooms", { rooms: [] }); return r.rooms || []; }
