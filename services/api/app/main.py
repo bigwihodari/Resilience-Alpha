@@ -1397,7 +1397,7 @@ def casino_dice(body: BetIn, user: str = Depends(current_user)):
 
 @app.post("/casino/roulette")
 def casino_roulette(body: BetIn, user: str = Depends(current_user)):
-    """Roulette (0-36) : rouge/noir → x2 ; pair/impair → x2 ; un numéro → x36."""
+    """Roulette (0-36) : rouge/noir → x2 ; pair/impair → x2 ; VERT (0) → x36 ; un numéro → x36."""
     REDS = {1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36}
     with Session(engine()) as s:
         acc = _take_bet(s, user, body.bet)
@@ -1408,6 +1408,8 @@ def casino_roulette(body: BetIn, user: str = Depends(current_user)):
             payout = body.bet * 2
         elif choice in ("black", "noir") and n != 0 and n not in REDS:
             payout = body.bet * 2
+        elif choice in ("green", "vert") and n == 0:
+            payout = body.bet * 36
         elif choice in ("even", "pair") and n != 0 and n % 2 == 0:
             payout = body.bet * 2
         elif choice in ("odd", "impair") and n % 2 == 1:
@@ -3145,17 +3147,35 @@ def game_clawback(x_admin_token: str = Header(default=None)):
 
 @app.post("/game/admin/reset")
 def game_reset(x_admin_token: str = Header(default=None)):
-    """Réinitialise la partie (rejouer la démo)."""
+    """Réinitialise TOUTE la partie (rejouer la démo propre) : butin attaquant + suspicion
+    + ÉCONOMIE clients (soldes remis à 1000, épargne 0, livrets/upgrades/enchères/quiz/mail/
+    historique effacés) + vainqueur. La banque (coffre) et les comptes sont conservés."""
     if x_admin_token != ADMIN_TOKEN:
         raise HTTPException(403, "forbidden")
+    # Attaquant (en mémoire) + suspicion par IP + vainqueur
     with game_lock:
         game_state.update({"victim": GAME_VICTIM, "loot": 0.0, "loot_neutralized": 0.0,
                            "exfiltrated_total": 0.0, "recon_count": 0, "heist_count": 0,
                            "intel": [], "discovered": [], "blocked_until": 0.0, "block_reason": "",
                            "insider_count": 0, "dino_hijack": None, "hk": {}, "client_heists": 0})
         rivals.clear()
+    with susp_lock:
+        suspicion.clear()
+    game_winner.update({"name": None, "camp": None, "networth": 0.0, "at": None})
     GAME_LOOT.set(0)
     GAME_BLOCKED.set(0)
+    # Économie (base) : clients à 1000 / épargne 0 ; on vide livrets, upgrades, marché, historique.
+    with engine().begin() as c:
+        c.execute(text("UPDATE accounts SET balance=1000, savings=0 "
+                       "WHERE user_id IN (SELECT id FROM users WHERE role='client')"))
+        c.execute(text("DELETE FROM bids"))
+        c.execute(text("DELETE FROM auctions"))
+        c.execute(text("DELETE FROM quizzes"))
+        c.execute(text("DELETE FROM mail"))
+        c.execute(text("DELETE FROM livrets"))
+        c.execute(text("DELETE FROM upgrades"))
+        c.execute(text("DELETE FROM transactions"))
+    print("[GAME] RESET complet (éco + attaquant)", flush=True)
     return _game_public()
 
 

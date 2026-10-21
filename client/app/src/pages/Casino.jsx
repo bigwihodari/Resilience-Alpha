@@ -272,10 +272,11 @@ function RouletteGame({ bet, onBalance, onError }) {
   useEffect(() => () => clearTimeout(timer.current), []);
 
   const bets = [
-    { k: "red", label: "Rouge", cls: "bg-[#C1292E] text-white" },
-    { k: "black", label: "Noir", cls: "bg-ink text-white" },
-    { k: "even", label: "Pair", cls: "bg-white/10 text-white" },
-    { k: "odd", label: "Impair", cls: "bg-white/10 text-white" },
+    { k: "red", label: "Rouge ×2", cls: "bg-[#C1292E] text-white" },
+    { k: "black", label: "Noir ×2", cls: "bg-ink text-white" },
+    { k: "green", label: "Vert ×36", cls: "bg-[#1E8E6A] text-white" },
+    { k: "even", label: "Pair ×2", cls: "bg-white/10 text-white" },
+    { k: "odd", label: "Impair ×2", cls: "bg-white/10 text-white" },
   ];
 
   async function spin() {
