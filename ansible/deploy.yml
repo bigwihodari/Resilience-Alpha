@@ -1,0 +1,66 @@
+---
+# Deploiement reproductible : app de paiement d'origine, puis Resilience Guard devant.
+- name: Deployer l'app et le module Resilience Guard
+  hosts: hote
+  gather_facts: false
+  tasks:
+    - name: Verifier que docker compose est present
+      ansible.builtin.command: docker compose version
+      changed_when: false
+
+    - name: Verifier que le daemon Docker repond
+      ansible.builtin.command: docker info --format '{% raw %}{{.ServerVersion}}{% endraw %}'
+      changed_when: false
+
+    - name: Lancer l'app d'origine
+      ansible.builtin.command:
+        cmd: docker compose up -d --build {{ app_services | join(' ') }}
+        chdir: "{{ repo_root }}"
+      environment: "{{ app_env }}"
+      changed_when: true
+
+    - name: Lancer les services requis par le frontend (sans dépendances)
+      ansible.builtin.command:
+        cmd: docker compose up -d --build --no-deps {{ app_helper_services | join(' ') }}
+        chdir: "{{ repo_root }}"
+      environment: "{{ app_env }}"
+      changed_when: true
+
+    - name: Attendre le frontend de l'app
+      ansible.builtin.uri:
+        url: "http://localhost:{{ app_frontend_port }}/"
+      register: app_front
+      until: app_front.status == 200
+      retries: 30
+      delay: 5
+
+    - name: Lancer le module Resilience Guard devant l'app
+      ansible.builtin.command:
+        cmd: docker compose -f docker-compose.module.yml up -d --build
+        chdir: "{{ module_dir }}"
+      environment: "{{ module_env }}"
+      changed_when: true
+
+    - name: Attendre la passerelle (proxy de l'app)
+      ansible.builtin.uri:
+        url: "{{ gateway_url }}/"
+      register: gw
+      until: gw.status == 200
+      retries: 30
+      delay: 5
+
+    - name: Attendre le cockpit
+      ansible.builtin.uri:
+        url: "{{ cockpit_url }}/"
+      register: cockpit
+      until: cockpit.status == 200
+      retries: 30
+      delay: 5
+
+    - name: Resume
+      ansible.builtin.debug:
+        msg:
+          - "App protegee (passerelle) : {{ gateway_url }}"
+          - "Cockpit                   : {{ cockpit_url }}"
+          - "App directe (frontend)    : http://localhost:{{ app_frontend_port }}"
+          - "Suite : ansible-playbook verify.yml"

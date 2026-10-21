@@ -1,0 +1,37 @@
+---
+# Variables de démo uniquement (aucun secret réel). Surcharge : -e clé=valeur
+repo_root: "{{ playbook_dir }}/.."
+module_dir: "{{ repo_root }}/module"
+
+# Application d'origine (docker-compose.yml racine)
+app_services: [db, auth, api, frontend]
+# Le nginx du frontend exige ces hôtes au démarrage. Lancés en --no-deps (sans
+# detector) : l'orchestrateur d'origine reste passif, seul celui du module remédie.
+app_helper_services: [prometheus, orchestrator, assistant]
+app_frontend_port: 8085
+app_prometheus_port: 9091   # 9090 est pris par le Prometheus du module
+app_env:
+  FRONTEND_PORT: "{{ app_frontend_port }}"
+  PROMETHEUS_PORT: "{{ app_prometheus_port }}"
+  TG_GAME_MODE: "0"
+  ROLE: primary
+
+# Compte de démo (verify.yml et canari de l'orchestrateur)
+demo_user: alice
+demo_password: password123
+
+# Module Resilience Guard (module/docker-compose.module.yml)
+gateway_url: http://localhost:8080
+cockpit_url: http://localhost:8088
+module_env:
+  PROTECTED_UPSTREAM: "http://host.docker.internal:{{ app_frontend_port }}"
+  CANARY_MODE: transaction
+  CANARY_USER: "{{ demo_user }}"
+  CANARY_PASSWORD: "{{ demo_password }}"
+
+# Base (doit correspondre au docker-compose.yml de l'app)
+db_container: ra-db
+
+# Destinataire du paiement de test : l'API refuse tout destinataire inconnu,
+# on utilise un marchand autorisé (MERCHANTS de l'api).
+check_recipient: SHOP-42
