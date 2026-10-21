@@ -118,8 +118,13 @@ export default function DinoWidget({ onEarned }) {
       // dino
       ctx.fillStyle = "#4B3FA6"; roundRect(ctx, DINO.x, dinoTop, DINO.w, DINO.h, 6); ctx.fill();
       ctx.fillStyle = "#fff"; ctx.fillRect(DINO.x + DINO.w - 9, dinoTop + 7, 4, 4);
-      // obstacles
-      ctx.fillStyle = "#1E8E6A"; s.obstacles.forEach((o) => roundRect(ctx, o.x, GROUND - o.h, o.w, o.h, 3) || ctx.fill());
+      // obstacles (cactus) — fill explicite : le `|| ctx.fill()` précédent court-circuitait
+      // le remplissage (roundRect renvoie true) -> obstacles invisibles, mort « sans raison ».
+      s.obstacles.forEach((o) => {
+        roundRect(ctx, o.x, GROUND - o.h, o.w, o.h, 3);
+        ctx.fillStyle = "#1E8E6A"; ctx.fill();
+        ctx.strokeStyle = "#145c45"; ctx.lineWidth = 2; ctx.stroke();
+      });
       // coins
       s.coins.forEach((cn) => { if (!cn.got) { ctx.fillStyle = "#E7B53C"; ctx.beginPath(); ctx.arc(cn.x, cn.y, 7, 0, 7); ctx.fill(); ctx.fillStyle = "#fff8e1"; ctx.beginPath(); ctx.arc(cn.x - 2, cn.y - 2, 2.2, 0, 7); ctx.fill(); } });
       // bonus
