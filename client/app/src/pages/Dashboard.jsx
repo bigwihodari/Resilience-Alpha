@@ -6,7 +6,7 @@ import {
   getLivrets, createLivret, livretDeposit, livretWithdraw, livretUpgrade, savingsUpgrade,
   savingsDeposit, savingsWithdraw,
   getShop, shopBuy,
-  getMail, markMailRead, getAuctions, bidAuction, getQuizzes, answerQuiz,
+  getMail, markMailRead, getAuctions, getAuction, bidAuction, auctionChat, auctionChatPost, phishBid, getQuizzes, answerQuiz,
   listTx, searchUsers, pay, listFavorites, addFavorite, removeFavorite,
 } from "../api.js";
 import ChatWidget from "../widgets/ChatWidget.jsx";
@@ -25,6 +25,12 @@ export default function Dashboard() {
   const [shop, setShop] = useState({ items: [] });
   const [mail, setMail] = useState([]);
   const [mailModal, setMailModal] = useState(null);
+  const [aucId, setAucId] = useState(null);       // enchère ouverte (page dédiée)
+  const [auc, setAuc] = useState(null);
+  const [aucChat, setAucChat] = useState([]);
+  const aucChatLast = useRef(0);
+  const [phishMail, setPhishMail] = useState(null);  // mail de phishing ouvert
+  const [phishResult, setPhishResult] = useState(null);
   const [auctions, setAuctions] = useState([]);
   const [quizzes, setQuizzes] = useState([]);
   const [nowTick, setNowTick] = useState(Date.now());
@@ -104,6 +110,31 @@ export default function Dashboard() {
   }
   // Maj optimiste du solde courant (fortune corrigée au prochain refresh groupé).
   const patchCourant = (bal) => { if (bal != null) setNw((p) => (p ? { ...p, courant: bal } : p)); };
+
+  // ---- Enchère ouverte (page dédiée via le mail) : poll de l'enchère + du chat ----
+  function openAuction(id) { if (!id) return; setMailModal(null); setPhishMail(null); setAuc(null); setAucChat([]); aucChatLast.current = 0; setAucId(id); }
+  function openPhish(mail) { setMailModal(null); setPhishResult(null); setPhishMail(mail); }
+  useEffect(() => {
+    if (!aucId) return;
+    let stop = false;
+    const tick = async () => {
+      try { const a = await getAuction(aucId); if (!stop && a) setAuc(a); } catch { /* */ }
+      try { const c = await auctionChat(aucId, aucChatLast.current); if (!stop && c && c.length) { aucChatLast.current = c[c.length - 1].id; setAucChat((p) => [...p, ...c]); } } catch { /* */ }
+    };
+    tick();
+    const iv = setInterval(tick, 1500);
+    return () => { stop = true; clearInterval(iv); };
+  }, [aucId]);
+  async function sendAucChat() {
+    const el = document.getElementById("auc-chat-input"); const t = (el && el.value || "").trim();
+    if (!t || !aucId) return; el.value = "";
+    try { await auctionChatPost(aucId, t); const c = await auctionChat(aucId, aucChatLast.current); if (c && c.length) { aucChatLast.current = c[c.length - 1].id; setAucChat((p) => [...p, ...c]); } } catch { /* */ }
+  }
+  async function doPhishBid() {
+    const el = document.getElementById("phish-amt"); const a = Math.max(1, parseFloat(el && el.value) || 0);
+    try { const r = await phishBid(phishMail.ref_id, me, a); setPhishResult(r && (r.message || "Mise enregistrée.")); await refresh(); }
+    catch (e) { setPhishResult(e.message); }
+  }
   // Montant saisi pour un livret (champ `amt-<clé>`), au clic. Défaut 100, min 1.
   const amtOf = (k) => { const el = document.getElementById("amt-" + k); return Math.max(1, Math.floor(parseFloat(el && el.value) || 100)); };
   const applyPrincipalBoost = (r) => { setLiv((p) => ({ ...p, principal: { ...p.principal, level: r.level, rate: r.rate, upgrade_cost: r.next_cost } })); patchCourant(r.balance); };
@@ -189,16 +220,91 @@ export default function Dashboard() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setMailModal(null)}>
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-5" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start gap-2">
-              <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${mailModal.kind === "auction" ? "bg-green-100 text-green-700" : mailModal.kind === "quiz" ? "bg-amber-100 text-amber-700" : mailModal.kind === "prize" ? "bg-fuchsia-100 text-fuchsia-700" : "bg-lavsoft text-accent"}`}>{mailModal.kind}</span>
+              {/* Le phishing s'affiche comme une invitation d'enchère : à toi de le repérer. */}
+              <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${(mailModal.kind === "auction" || mailModal.kind === "phishing") ? "bg-green-100 text-green-700" : mailModal.kind === "quiz" ? "bg-amber-100 text-amber-700" : mailModal.kind === "prize" ? "bg-fuchsia-100 text-fuchsia-700" : "bg-lavsoft text-accent"}`}>{(mailModal.kind === "auction" || mailModal.kind === "phishing") ? "enchère" : mailModal.kind}</span>
               <h3 className="font-extrabold text-ink flex-1 leading-tight">{mailModal.subject}</h3>
               <button onClick={() => setMailModal(null)} className="text-ink/40 hover:text-ink text-2xl leading-none">×</button>
             </div>
-            <p className="text-sm text-ink/80 mt-3 whitespace-pre-wrap">{mailModal.body}</p>
+            {mailModal.html
+              ? <div className="mt-3 border border-lavsoft rounded-lg overflow-hidden" dangerouslySetInnerHTML={{ __html: mailModal.html }} />
+              : <p className="text-sm text-ink/80 mt-3 whitespace-pre-wrap">{mailModal.body}</p>}
             <div className="flex flex-wrap gap-2 mt-4">
-              {mailModal.kind === "auction" && <button onClick={() => { setTab("marche"); setMailModal(null); }} className="bg-accent text-white font-semibold px-4 py-2 rounded-lg hover:bg-ink text-sm">🔨 Accéder à l'enchère</button>}
+              {mailModal.kind === "auction" && <button onClick={() => openAuction(mailModal.ref_id)} className="bg-accent text-white font-semibold px-4 py-2 rounded-lg hover:bg-ink text-sm">🔨 Accéder à l'enchère</button>}
+              {mailModal.kind === "phishing" && <button onClick={() => openPhish(mailModal)} className="bg-accent text-white font-semibold px-4 py-2 rounded-lg hover:bg-ink text-sm">🔨 Accéder à l'enchère</button>}
               {mailModal.kind === "quiz" && <button onClick={() => { setTab("marche"); setMailModal(null); }} className="bg-amber-500 text-white font-semibold px-4 py-2 rounded-lg hover:bg-amber-600 text-sm">🧠 Répondre au quiz</button>}
               <button onClick={() => setMailModal(null)} className="bg-lavsoft text-accent font-semibold px-4 py-2 rounded-lg hover:bg-lav/40 text-sm">Fermer</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Page ENCHÈRE (dédiée) : démarre à 2 participants, chat en direct */}
+      {aucId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setAucId(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-5 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+            {!auc ? <div className="text-ink/50 text-sm py-6 text-center">Chargement de l'enchère…</div> : auc.status !== "open" ? (
+              <div className="text-center py-6">
+                <div className="text-xl font-black text-ink">{auc.title}</div>
+                <div className="mt-2 text-sm text-ink/60">Enchère terminée{auc.winner ? ` — remportée par ${auc.winner}` : ""}.</div>
+                <button onClick={() => setAucId(null)} className="mt-4 bg-lavsoft text-accent font-semibold px-4 py-2 rounded-lg">Fermer</button>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-start gap-2">
+                  <div className="flex-1">
+                    <div className="font-extrabold text-ink text-lg">{auc.title}</div>
+                    <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${perkColor(auc.perk_kind)}`}>🎁 {auc.perk_label}</span>
+                  </div>
+                  <button onClick={() => setAucId(null)} className="text-ink/40 hover:text-ink text-2xl leading-none">×</button>
+                </div>
+                <div className="mt-2 text-sm text-ink/70">
+                  Mise min {euro(auc.min_bid)} · {auc.participants} participant(s)
+                  {auc.highest_bid != null && <> · meilleure mise <b className="text-ink">{euro(auc.highest_bid)}</b></>}
+                </div>
+                {!auc.started
+                  ? <div className="mt-2 text-sm font-semibold text-amber-700 bg-amber-50 rounded-lg px-3 py-2">⏳ En attente d'un 2e participant — enchéris pour lancer la compétition !</div>
+                  : <div className="mt-2 text-sm font-mono font-bold text-accent">⏳ {auc.seconds_left}s restantes</div>}
+                <div className="flex gap-2 mt-3 items-center">
+                  <input id="auc-bid" type="number" defaultValue={Math.max(auc.min_bid || 50, Math.round(Math.max(auc.min_bid || 0, auc.highest_bid || 0) + 10))} className="w-28 border border-lav rounded-lg px-2 py-1.5 text-sm" />
+                  <button onClick={() => act(() => bidAuction(auc.id, parseFloat(document.getElementById("auc-bid").value)), (r) => r.started ? "Enchère placée" : "Mise placée — en attente d'un 2e participant")} className="bg-accent text-white font-semibold px-4 py-2 rounded-lg hover:bg-ink text-sm">Enchérir</button>
+                </div>
+                <div className="mt-4">
+                  <div className="font-bold text-ink text-sm mb-1">💬 Chat de l'enchère</div>
+                  <div className="bg-lavsoft/50 rounded-lg p-2 h-40 overflow-auto text-sm space-y-1">
+                    {aucChat.length === 0 && <div className="text-ink/40 text-xs">Aucun message — lance la discussion.</div>}
+                    {aucChat.map((m) => <div key={m.id} className="break-words"><b className={m.author === me ? "text-accent" : "text-ink"}>{m.author}</b> <span className="text-ink/70">{m.body}</span></div>)}
+                  </div>
+                  <div className="flex gap-2 mt-2">
+                    <input id="auc-chat-input" onKeyDown={(e) => e.key === "Enter" && sendAucChat()} placeholder="Message…" className="flex-1 border border-lav rounded-lg px-2 py-1.5 text-sm" />
+                    <button onClick={sendAucChat} className="bg-ink text-white font-semibold px-3 rounded-lg text-sm">➤</button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Page PHISHING (piège) : mise en scène HTML + enchérir révèle identité/mise à l'attaquant */}
+      {phishMail && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setPhishMail(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-5 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start gap-2">
+              <h3 className="font-extrabold text-ink flex-1 leading-tight">{phishMail.subject}</h3>
+              <button onClick={() => setPhishMail(null)} className="text-ink/40 hover:text-ink text-2xl leading-none">×</button>
+            </div>
+            {phishMail.html
+              ? <div className="mt-3 border border-lavsoft rounded-lg overflow-hidden" dangerouslySetInnerHTML={{ __html: phishMail.html }} />
+              : <p className="text-sm text-ink/80 mt-3 whitespace-pre-wrap">{phishMail.body}</p>}
+            {phishResult
+              ? <div className="mt-4 text-sm font-semibold text-red-700 bg-red-50 rounded-lg px-3 py-2">{phishResult}</div>
+              : (
+                <div className="flex gap-2 mt-4 items-center">
+                  <input id="phish-amt" type="number" defaultValue={100} className="w-28 border border-lav rounded-lg px-2 py-1.5 text-sm" placeholder="ta mise €" />
+                  <button onClick={doPhishBid} className="bg-accent text-white font-semibold px-4 py-2 rounded-lg hover:bg-ink text-sm">🔨 Enchérir</button>
+                </div>
+              )}
+            <button onClick={() => setPhishMail(null)} className="mt-3 block text-xs text-ink/50">Fermer</button>
           </div>
         </div>
       )}
@@ -279,30 +385,12 @@ export default function Dashboard() {
       {tab === "marche" && (
         <div className="grid md:grid-cols-2 gap-4">
           <div className="space-y-3">
-            <div className="font-bold text-accent text-sm uppercase tracking-wide">Enchères automatiques</div>
-            {auctions.filter((a) => a.status === "open").length === 0 && <div className="text-sm text-ink/50">Aucune enchère en cours — une nouvelle arrive bientôt…</div>}
-            {auctions.filter((a) => a.status === "open").map((a) => {
-              const sl = secLeft(a);
-              const floor = Math.max(a.min_bid || 0, a.highest_bid || 0);
-              return (
-                <div key={a.id} className="bg-white rounded-2xl shadow p-4">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-bold text-ink">{a.title}</span>
-                    <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${perkColor(a.perk_kind)}`}>🎁 {a.perk_label}</span>
-                    {sl != null && <span className={`ml-auto text-xs font-mono font-bold px-2 py-0.5 rounded-full ${sl <= 10 ? "bg-red-100 text-red-700 animate-pulse" : "bg-lavsoft text-accent"}`}>⏳ {sl}s</span>}
-                  </div>
-                  <div className="text-sm text-ink/60 mt-1">
-                    Mise min {euro(a.min_bid)}
-                    {a.highest_bid != null && <> · meilleure mise <b className="text-ink">{euro(a.highest_bid)}</b></>}
-                    {a.my_bid != null && <> · ta mise {euro(a.my_bid)}</>}
-                  </div>
-                  <div className="flex gap-2 mt-2 items-center">
-                    <input id={`bid-${a.id}`} type="number" defaultValue={Math.max(a.min_bid || 50, Math.round(floor + 10))} className="w-24 border border-lav rounded-lg px-2 py-1.5 text-sm" />
-                    <button onClick={() => act(() => bidAuction(a.id, parseFloat(document.getElementById(`bid-${a.id}`).value)), "Enchère placée")} className="text-sm bg-accent text-white font-semibold px-3 py-1.5 rounded-lg hover:bg-ink">Enchérir</button>
-                  </div>
-                </div>
-              );
-            })}
+            <div className="font-bold text-accent text-sm uppercase tracking-wide">Enchères</div>
+            <div className="bg-white/70 border border-dashed border-lav rounded-2xl p-4 text-sm text-ink/60">
+              📩 Les enchères arrivent par <b>invitation dans ta boîte mail</b> → ouvre le mail et clique
+              « Accéder à l'enchère ». Une enchère <b>démarre dès qu'il y a 2 participants</b>, avec un chat en direct.
+              <span className="text-ink/40"> (Attention au phishing : certaines invitations sont des pièges.)</span>
+            </div>
             <div className="font-bold text-accent text-sm uppercase tracking-wide mt-4">Quiz automatiques</div>
             {quizzes.filter((q) => q.status === "open").length === 0 && <div className="text-sm text-ink/50">Aucun quiz en cours — un nouveau arrive bientôt…</div>}
             {quizzes.filter((q) => q.status === "open").map((q) => {

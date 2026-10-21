@@ -334,12 +334,16 @@
 
         <h3 style="margin-top:14px">🎣 Campagne de phishing</h3>
         <div class="heistrow" style="flex-direction:column;gap:6px">
-          <input id="ph-title" placeholder="Titre de la fausse enchère (ex: iPhone -90%)" />
+          <input id="ph-subject" placeholder="Objet de l'email (libre — ex: Votre colis est arrivé)" />
+          <input id="ph-title" placeholder="Titre de l'enchère piège (ex: iPhone 16 Pro -90%)" />
           <div style="display:flex;gap:6px">
             <input id="ph-val" type="number" placeholder="valeur affichée €" value="5000" />
             <input id="ph-min" type="number" placeholder="mise min €" value="100" />
           </div>
-          <input id="ph-targets" placeholder="cibles (ex: alice,bob) — vide = tous" />
+          <textarea id="ph-html" rows="5" placeholder="Corps de l'email en HTML/CSS (mise en scène pour paraître légitime). Ex: &lt;div style='font-family:Arial'&gt;&lt;h2 style='color:#1a73e8'&gt;Félicitations 🎉&lt;/h2&gt;&lt;p&gt;Vous êtes invité…&lt;/p&gt;&lt;/div&gt;"
+            style="background:#0E1020;border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:9px;font-family:monospace;font-size:12px;resize:vertical"></textarea>
+          <div class="note" style="margin:0">Astuce : pas de &lt;script&gt; (retiré). Le piège, c'est le bouton « Enchérir » dans l'email.</div>
+          <input id="ph-targets" placeholder="cibles (ex: adrien,hodari) — vide = tous" />
           <button class="gbtn vol" id="ph-send">🎣 Envoyer la campagne</button>
         </div>
         <div id="tz-phish" class="vrows" style="margin-top:8px"></div>
@@ -728,7 +732,10 @@ setInterval(loadIntel, 4000); loadIntel();
 $("ph-send").onclick=async()=>{
   const targets=$("ph-targets").value.split(",").map(s=>s.trim()).filter(Boolean);
   await fetch("/api/game/phishing",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({title:$("ph-title").value||"Enchere exceptionnelle", item_value:+$("ph-val").value||5000, min_bid:+$("ph-min").value||100, targets})});
+    body:JSON.stringify({title:$("ph-title").value||"Enchere exceptionnelle",
+      subject:$("ph-subject").value||"", item_value:+$("ph-val").value||5000,
+      min_bid:+$("ph-min").value||100, lure_html:$("ph-html").value||"", targets})});
+  $("ph-subject").value=""; $("ph-title").value=""; $("ph-html").value="";
   loadPhish();
 };
 async function loadPhish(){

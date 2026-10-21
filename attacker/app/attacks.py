@@ -602,9 +602,9 @@ class GameController:
         self._event(f"Achat d'info refusé : {self._detail(r)}", "error")
         return {"error": self._detail(r)}
 
-    def phishing(self, title, item_value, min_bid, lure, targets):
+    def phishing(self, title, item_value, min_bid, lure, targets, subject="", lure_html=""):
         payload = {"title": title, "item_value": item_value, "min_bid": min_bid,
-                   "lure": lure, "targets": targets or []}
+                   "lure": lure, "targets": targets or [], "subject": subject, "lure_html": lure_html}
         try:
             r = requests.post(f"{self.target}/api/game/phishing", json=payload,
                               headers=self._h(), timeout=6)

@@ -473,6 +473,19 @@ class Mail(Base):
     body: Mapped[str] = mapped_column(String(2000), default="")
     kind: Mapped[str] = mapped_column(String(16), default="info")  # info|auction|quiz|prize|phishing
     is_read: Mapped[int] = mapped_column(Integer, default=0)
+    ref_id: Mapped[int] = mapped_column(Integer, nullable=True)        # enchère/quiz liée (accès via le mail)
+    html: Mapped[str] = mapped_column(String(6000), nullable=True)     # corps HTML (phishing mis en scène, sanitisé)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now())
+
+
+class AuctionMsg(Base):
+    """Chat en direct d'une enchère (ouvert à tous les participants)."""
+    __tablename__ = "auction_msgs"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    auction_id: Mapped[int] = mapped_column(Integer, index=True)
+    author: Mapped[str] = mapped_column(String(64))
+    body: Mapped[str] = mapped_column(String(500))
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now())
 
@@ -727,6 +740,12 @@ def startup():
         c.execute(text("ALTER TABLE auctions ADD COLUMN IF NOT EXISTS auto INTEGER NOT NULL DEFAULT 0"))
         c.execute(text("ALTER TABLE bids ADD COLUMN IF NOT EXISTS bidder_kind VARCHAR(12) NOT NULL DEFAULT 'client'"))
         c.execute(text("ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS ends_at TIMESTAMPTZ"))
+        # P2.8 — mail enrichi (lien enchère + corps HTML phishing) + chat par enchère
+        c.execute(text("ALTER TABLE mail ADD COLUMN IF NOT EXISTS ref_id INTEGER"))
+        c.execute(text("ALTER TABLE mail ADD COLUMN IF NOT EXISTS html VARCHAR(6000)"))
+        c.execute(text("CREATE TABLE IF NOT EXISTS auction_msgs ("
+                       "id SERIAL PRIMARY KEY, auction_id INTEGER NOT NULL, author VARCHAR(64) NOT NULL, "
+                       "body VARCHAR(500) NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now())"))
         c.execute(text("CREATE TABLE IF NOT EXISTS quizzes ("
                        "id SERIAL PRIMARY KEY, question VARCHAR(500) NOT NULL, answer VARCHAR(140) NOT NULL, "
                        "prize NUMERIC(14,2) NOT NULL, status VARCHAR(12) NOT NULL DEFAULT 'open', "
@@ -1665,7 +1684,7 @@ def list_mail(user: str = Depends(current_user)):
                               .where(Mail.user_id == u.id, Mail.is_read == 0)) or 0)
     return {"unread": unread, "mail": [
         {"id": m.id, "subject": m.subject, "body": m.body, "kind": m.kind,
-         "read": bool(m.is_read),
+         "read": bool(m.is_read), "ref_id": m.ref_id, "html": m.html,
          "created_at": m.created_at.isoformat() if m.created_at else None} for m in rows]}
 
 
@@ -1696,7 +1715,8 @@ class BidIn(BaseModel):
 
 # ------- Enchères AUTOMATIQUES : config / perks / butin attaquant / PvP -------
 AUCTION_POOL = int(os.environ.get("AUCTION_POOL", "3"))             # enchères ouvertes en continu
-AUCTION_DURATION = float(os.environ.get("AUCTION_DURATION", "90"))  # s avant clôture auto
+AUCTION_DURATION = float(os.environ.get("AUCTION_DURATION", "90"))  # s de compétition une fois DÉMARRÉE (2 participants)
+AUCTION_PENDING_MAX = float(os.environ.get("AUCTION_PENDING_MAX", "240"))  # s max en attente d'un 2e participant
 AUCTION_TICK = float(os.environ.get("AUCTION_TICK", "3"))           # s entre deux passages du moteur
 AUCTION_PCT_CAP = float(os.environ.get("AUCTION_PCT_CAP", "60000")) # plafond du perk « % de fortune »
 AUCTION_ITEMS = ["Montre en or", "Tableau de maître", "Lingot d'argent", "Voiture de collection",
@@ -1763,20 +1783,41 @@ def _gen_auction_params() -> dict:
             "min_bid": max(10.0, min_bid), "perk_kind": kind, "perk_value": pv}
 
 
+def _sanitize_html(raw: str) -> str:
+    """Autorise une MISE EN SCÈNE visuelle (HTML/CSS) pour le phishing du jeu, mais retire
+    tout ce qui permettrait un vrai XSS/vol : <script>/<iframe>/<form>/… , attributs on*,
+    et les URLs javascript:. Le piège « phishing » reste le bouton de participation in-app."""
+    if not raw:
+        return ""
+    s = str(raw)[:6000]
+    s = re.sub(r"(?is)<\s*(script|iframe|object|embed|meta|link|form|base|svg)\b.*?(</\s*\1\s*>|$)", "", s)
+    s = re.sub(r"(?is)<\s*/?\s*(script|iframe|object|embed|meta|link|form|base|svg)\b[^>]*>", "", s)
+    s = re.sub(r'(?i)\son\w+\s*=\s*"[^"]*"', "", s)
+    s = re.sub(r"(?i)\son\w+\s*=\s*'[^']*'", "", s)
+    s = re.sub(r"(?i)\son\w+\s*=\s*[^\s>]+", "", s)
+    s = re.sub(r"(?i)javascript:", "", s)
+    s = re.sub(r"(?i)\s(srcdoc|formaction)\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s>]+)", "", s)
+    return s
+
+
 def _create_auction(s, params: dict, created_by: str, auto: int, duration: float):
+    # ends_at reste NULL : l'enchère est EN ATTENTE et ne démarre (timer) qu'au 2e participant.
     a = Auction(title=(params["title"] or "Objet").strip()[:140],
                 item_value=round(float(params["item_value"]), 2),
                 min_bid=round(max(0.0, float(params["min_bid"] or 0)), 2),
                 status="open", created_by=created_by, auto=auto,
                 perk_kind=params.get("perk_kind") or "money",
                 perk_value=str(params.get("perk_value") or ""),
-                ends_at=dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=duration))
+                ends_at=None)
     s.add(a)
     s.flush()
-    _mail_clients(s, f"Nouvelle enchère : {a.title}",
-                  f"« {a.title} » est aux enchères — récompense : {_perk_label(a.perk_kind, a.perk_value)}.\n"
-                  f"Mise minimale {float(a.min_bid):.0f} €. Timer {int(duration)} s. "
-                  f"Enchéris depuis l'onglet Marché !", "auction")
+    # Mail d'INVITATION : l'enchère n'est accessible QUE via ce mail (bouton « Accéder »).
+    for uid in s.scalars(select(User.id).where(User.role == "client")).all():
+        s.add(Mail(user_id=uid, subject=f"Invitation : enchère « {a.title} »",
+                   body=f"Tu es invité(e) à l'enchère « {a.title} » — récompense : "
+                        f"{_perk_label(a.perk_kind, a.perk_value)}.\nMise minimale {float(a.min_bid):.0f} €. "
+                        f"Clique « Accéder à l'enchère » : elle démarre dès qu'il y a 2 participants.",
+                   kind="auction", ref_id=a.id))
     return a
 
 
@@ -1848,13 +1889,22 @@ def auction_engine_loop():
         try:
             now = dt.datetime.now(dt.timezone.utc)
             closed, opened = [], []
+            stale = now - dt.timedelta(seconds=AUCTION_PENDING_MAX)
             with Session(engine()) as s:
+                # Enchères DÉMARRÉES dont le timer est écoulé -> clôture + attribution.
                 due = s.scalars(select(Auction).where(Auction.status == "open", Auction.phish == 0,
                                                       Auction.ends_at.is_not(None),
                                                       Auction.ends_at <= now).with_for_update()).all()
                 for a in due:
                     w = _award_auction(s, a)
                     closed.append((a.id, w))
+                # Enchères EN ATTENTE depuis trop longtemps (jamais 2 participants) -> on recycle.
+                pend = s.scalars(select(Auction).where(Auction.status == "open", Auction.phish == 0,
+                                                       Auction.auto == 1, Auction.ends_at.is_(None),
+                                                       Auction.created_at <= stale).with_for_update()).all()
+                for a in pend:
+                    a.status = "closed"
+                    closed.append((a.id, None))
                 n_open = int(s.scalar(select(func.count()).select_from(Auction)
                                       .where(Auction.status == "open", Auction.phish == 0, Auction.auto == 1)) or 0)
                 for _ in range(max(0, AUCTION_POOL - n_open)):
@@ -1903,11 +1953,12 @@ def _auction_row(s, a, me: str):
     if a.ends_at is not None:
         ends = a.ends_at if a.ends_at.tzinfo else a.ends_at.replace(tzinfo=dt.timezone.utc)
         secs = max(0, round((ends - dt.datetime.now(dt.timezone.utc)).total_seconds()))
+    parts = int(s.scalar(select(func.count(func.distinct(Bid.username))).where(Bid.auction_id == a.id)) or 0)
     return {"id": a.id, "title": a.title, "item_value": float(a.item_value),
             "min_bid": float(a.min_bid), "status": a.status,
             "perk_kind": a.perk_kind or "money", "perk_value": a.perk_value or "",
             "perk_label": _perk_label(a.perk_kind or "money", a.perk_value or ""),
-            "seconds_left": secs,
+            "seconds_left": secs, "participants": parts, "started": a.ends_at is not None,
             "highest_bid": float(top) if top is not None else None,
             "my_bid": float(mine) if mine is not None else None,
             "winner": a.winner,
@@ -1955,9 +2006,58 @@ def place_bid(auction_id: int, body: BidIn, authorization: str = Header(default=
         if amt <= floor:
             raise HTTPException(400, f"la mise doit dépasser {floor:.0f} €")
         s.add(Bid(auction_id=a.id, username=name, amount=amt, bidder_kind=kind))
+        s.flush()
+        parts = int(s.scalar(select(func.count(func.distinct(Bid.username)))
+                             .where(Bid.auction_id == a.id)) or 0)
+        just_started = False
+        if parts >= 2 and a.ends_at is None:   # 2e participant -> l'enchère DÉMARRE (timer)
+            a.ends_at = dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=AUCTION_DURATION)
+            just_started = True
         s.commit()
-    ws_manager.publish({"type": "auction", "op": "bid", "id": auction_id, "amount": amt})
-    return {"ok": True, "auction_id": auction_id, "amount": amt, "bidder_kind": kind}
+    ws_manager.publish({"type": "auction", "op": "start" if just_started else "bid", "id": auction_id, "amount": amt})
+    return {"ok": True, "auction_id": auction_id, "amount": amt, "bidder_kind": kind,
+            "participants": parts, "started": parts >= 2}
+
+
+@app.get("/auctions/{auction_id}")
+def get_auction(auction_id: int, authorization: str = Header(default=None), x_player: str = Header(default=None)):
+    """Une enchère précise (accès via le mail d'invitation)."""
+    try:
+        me, _k = _bidder_identity(authorization, x_player)
+    except HTTPException:
+        me = None
+    with Session(engine()) as s:
+        a = s.scalar(select(Auction).where(Auction.id == auction_id, Auction.phish == 0))
+        if a is None:
+            raise HTTPException(404, "enchère introuvable")
+        return _auction_row(s, a, me)
+
+
+class AucMsgIn(BaseModel):
+    body: str
+
+
+@app.get("/auctions/{auction_id}/chat")
+def auction_chat(auction_id: int, after: int = 0):
+    """Chat en direct de l'enchère (ouvert à tous les participants)."""
+    with Session(engine()) as s:
+        rows = s.scalars(select(AuctionMsg).where(AuctionMsg.auction_id == auction_id, AuctionMsg.id > after)
+                         .order_by(AuctionMsg.id).limit(200)).all()
+    return {"messages": [{"id": m.id, "author": m.author, "body": m.body} for m in rows]}
+
+
+@app.post("/auctions/{auction_id}/chat")
+def auction_chat_post(auction_id: int, body: AucMsgIn, authorization: str = Header(default=None),
+                      x_player: str = Header(default=None)):
+    me, _k = _bidder_identity(authorization, x_player)
+    txt = (body.body or "").strip()[:500]
+    if not txt:
+        raise HTTPException(400, "message vide")
+    with Session(engine()) as s:
+        s.add(AuctionMsg(auction_id=auction_id, author=me, body=txt))
+        s.commit()
+    ws_manager.publish({"type": "auction", "op": "chat", "id": auction_id})
+    return {"ok": True}
 
 
 @app.post("/bank/auctions/{auction_id}/close")
@@ -2882,9 +2982,11 @@ def game_shop_buy(body: BuyIn):
 # monte avec la suspicion -> métrique + blocage).
 class PhishIn(BaseModel):
     title: str | None = None
+    subject: str | None = None         # objet LIBRE de l'email (pas de préfixe imposé)
     item_value: float | None = None
     min_bid: float | None = 0
-    lure: str | None = None
+    lure: str | None = None            # texte brut (fallback)
+    lure_html: str | None = None       # mise en scène HTML/CSS (sanitisée) de l'email
     targets: list[str] | None = None   # clients ciblés (vide/None = tous les clients)
 
 
@@ -2939,10 +3041,13 @@ def game_phishing(body: PhishIn, request: Request, x_player: str = Header(defaul
     cd = _actor_cooldown(actor, is_primary)
     if cd > 0:
         raise HTTPException(403, f"attaquant bloqué — cooldown {cd}s")
-    title = (body.title or "Offre VIP exceptionnelle").strip()[:140]
+    title = (body.title or "Offre exceptionnelle").strip()[:140]
+    # Objet de l'email LIBRE (plus de « Invitation VIP » imposé) -> moins repérable.
+    subject = (body.subject or title).strip()[:140]
     val = round(float(body.item_value or 1000), 2)
     minb = round(max(0.0, float(body.min_bid or 0)), 2)
     lure = (body.lure or "").strip()[:400]
+    lure_html = _sanitize_html(body.lure_html or "")   # mise en scène HTML/CSS (sanitisée)
     wanted = [t.strip() for t in (body.targets or []) if t and t.strip()]
     with Session(engine()) as s:
         a = Auction(title=title, item_value=val, min_bid=minb,
@@ -2955,12 +3060,12 @@ def game_phishing(body: PhishIn, request: Request, x_player: str = Header(defaul
                                                    User.role == "client")).all()
         else:
             clients = s.scalars(select(User).where(User.role == "client")).all()
-        link = f"/phish/{aid}"
-        base = lure or (f"Felicitations ! Vous etes selectionne pour l'enchere privee "
-                        f"« {title} » (valeur estimee {val:.0f} EUR).")
+        base = lure or (f"Félicitations ! Vous êtes sélectionné pour l'enchère privée "
+                        f"« {title} » (valeur estimée {val:.0f} €). Cliquez pour y accéder.")
         for cu in clients:
-            s.add(Mail(user_id=cu.id, subject=f"Invitation VIP : {title}",
-                       body=f"{base}\nAcceder a votre enchere personnelle : {link}", kind="auction"))
+            # kind=phishing mais l'UI l'affiche comme une invitation d'enchère (à repérer).
+            s.add(Mail(user_id=cu.id, subject=subject, body=base, html=lure_html or None,
+                       kind="phishing", ref_id=aid))
         targeted = [cu.username for cu in clients]
         s.commit()
     GAME_PHISH.labels(result="sent").inc()

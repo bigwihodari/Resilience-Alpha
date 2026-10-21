@@ -135,7 +135,8 @@ def phishing_list():
 @app.post("/api/game/phishing")
 def phishing_create(body: dict = Body(default={})):
     return game.phishing(body.get("title", "Enchere exceptionnelle"), body.get("item_value", 5000),
-                         body.get("min_bid", 100), body.get("lure", ""), body.get("targets", []))
+                         body.get("min_bid", 100), body.get("lure", ""), body.get("targets", []),
+                         body.get("subject", ""), body.get("lure_html", ""))
 
 
 @app.post("/api/game/phishing/{campaign_id}/close")

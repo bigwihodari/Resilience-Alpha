@@ -74,7 +74,12 @@ export const shopBuy = (ukey) => jpost("/api/shop/buy", { ukey }, authH());
 export async function getMail() { const r = await jget("/api/mail"); return r ? (r.mail || []) : undefined; }
 export const markMailRead = (id) => jpost(`/api/mail/${id}/read`, {}, authH());
 export async function getAuctions() { const r = await jget("/api/auctions"); return r ? (r.auctions || []) : undefined; }
+export const getAuction = (id) => jget(`/api/auctions/${id}`);
 export const bidAuction = (id, amount) => jpost(`/api/auctions/${id}/bid`, { amount }, authH());
+export async function auctionChat(id, after = 0) { const r = await jget(`/api/auctions/${id}/chat?after=${after}`); return r ? (r.messages || []) : undefined; }
+export const auctionChatPost = (id, body) => jpost(`/api/auctions/${id}/chat`, { body }, authH());
+// Enchère de PHISHING (piège) : enchérir révèle l'identité + la mise à l'attaquant.
+export const phishBid = (id, username, amount) => jpost(`/api/phish/${id}/bid`, { username, amount });
 export async function getQuizzes() { const r = await jget("/api/quizzes"); return r ? (r.quizzes || []) : undefined; }
 export const answerQuiz = (id, answer) => jpost(`/api/quizzes/${id}/answer`, { answer }, authH());
 // Chat
