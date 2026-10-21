@@ -1,19 +1,28 @@
-# Resilience-Alpha - mise a jour du SERVEUR HOST. Windows / PowerShell.
-# git pull + reconstruction/redemarrage propre (meme si la stack tourne deja).
+# Resilience-Alpha - mise a jour COMPLETE (host + client + attaquant). Windows / PowerShell.
+# git pull + reconstruction + recreation forcee (sinon un changement de conf nginx/env
+# n'est pas toujours applique par `up --build` seul).
 $ErrorActionPreference = "Stop"
+Set-Location -Path $PSScriptRoot
 Write-Host "[..] Recuperation du code (git pull)..."
-git pull
+git pull --ff-only; if (-not $?) { git pull }
 if (-not (Test-Path ".env")) { Copy-Item ".env.example" ".env"; Write-Host "[ok] .env cree" }
-function Get-EnvVal($n, $d) {
-    if (Test-Path ".env") {
-        $l = Select-String -Path ".env" -Pattern "^$n=" -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($l) { return (($l.Line -split "=", 2)[1]).Trim() }
-    }
-    return $d
+
+Write-Host "[..] HOST (api / auth / frontend / orchestrateur / observabilite)..."
+docker compose up -d --build --force-recreate --remove-orphans
+
+if (Test-Path "client") {
+    Write-Host "[..] CLIENT (le jeu)..."
+    Push-Location client; docker compose up -d --build --force-recreate; Pop-Location
 }
-$role = Get-EnvVal "ROLE" "primary"
-Write-Host "[..] Reconstruction et redemarrage (role : $role)..."
-docker compose up -d --build --remove-orphans
+if (Test-Path "attacker") {
+    Write-Host "[..] ATTAQUANT (console)..."
+    Push-Location attacker; docker compose up -d --build --force-recreate; Pop-Location
+}
+
 Write-Host ""
-Write-Host "[ok] Serveur HOST a jour (role : $role). Etat :"
+Write-Host "[ok] Tout est a jour. Etat du host :"
 docker compose ps
+Write-Host ""
+Write-Host "Jeu (client)   : http://localhost:8095"
+Write-Host "App / cockpit  : http://localhost:8080"
+Write-Host "Console attaq. : http://localhost:8090"

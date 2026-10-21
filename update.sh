@@ -1,14 +1,29 @@
 #!/usr/bin/env bash
-# Resilience-Alpha — mise à jour du SERVEUR HOST. Git Bash / Linux / Mac.
-# git pull + reconstruction/redémarrage propre (même si la stack tourne déjà).
+# Resilience-Alpha — mise à jour COMPLÈTE (host + client + attaquant). Git Bash / Linux / Mac.
+# git pull + reconstruction + recréation forcée (sinon un changement de conf nginx/env
+# n'est pas toujours appliqué par `up --build` seul).
 set -e
+cd "$(dirname "$0")"
 echo "[..] Récupération du code (git pull)..."
-git pull
-if [ ! -f .env ]; then cp .env.example .env; echo "[ok] .env créé"; fi
-getv() { grep -E "^$1=" .env 2>/dev/null | head -1 | cut -d= -f2 | tr -d '[:space:]' || true; }
-ROLE=$(getv ROLE); ROLE=${ROLE:-primary}
-echo "[..] Reconstruction et redémarrage (rôle : $ROLE)..."
-docker compose up -d --build --remove-orphans
+git pull --ff-only || git pull
+[ -f .env ] || { cp .env.example .env; echo "[ok] .env créé"; }
+
+echo "[..] HOST (api / auth / frontend / orchestrateur / observabilité)..."
+docker compose up -d --build --force-recreate --remove-orphans
+
+if [ -d client ]; then
+  echo "[..] CLIENT (le jeu)..."
+  ( cd client && docker compose up -d --build --force-recreate )
+fi
+if [ -d attacker ]; then
+  echo "[..] ATTAQUANT (console)..."
+  ( cd attacker && docker compose up -d --build --force-recreate )
+fi
+
 echo ""
-echo "[ok] Serveur HOST à jour (rôle : $ROLE). État :"
+echo "[ok] Tout est à jour. État du host :"
 docker compose ps
+echo ""
+echo "Jeu (client)   : http://localhost:8095"
+echo "App / cockpit  : http://localhost:8080"
+echo "Console attaq. : http://localhost:8090"
