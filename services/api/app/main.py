@@ -1082,7 +1082,14 @@ def leaderboard():
             .group_by(User.username, Account.balance, Account.savings)
         ).all()
     board = [{"name": r[0], "camp": "client", "networth": _networth_row(r[1], r[2], r[3])} for r in rows]
-    board.append({"name": "attaquant", "camp": "attaquant", "networth": round(float(game_state.get("loot", 0)), 2)})
+    # Attaquants : un par acteur (primaire + rivals nommés), chacun avec son butin propre.
+    with game_lock:
+        atk_loot = float(game_state.get("loot", 0))
+        rv = dict(rivals)
+    if atk_loot > 0 or not rv:
+        board.append({"name": "attaquant", "camp": "attaquant", "networth": round(atk_loot, 2)})
+    for h, v in rv.items():
+        board.append({"name": h, "camp": "attaquant", "networth": round(float(v), 2)})
     board.sort(key=lambda x: x["networth"], reverse=True)
     return {"target": WIN_TARGET, "winner": game_winner if game_winner["name"] else None, "board": board[:20]}
 
@@ -1224,11 +1231,13 @@ def _check_win():
         nw = _networth_row(bal, sav, lt)
         if nw >= WIN_TARGET and (winner is None or nw > winner[1]):
             winner = (uname, nw, "client")
-    # Attaquant : butin détenu
+    # Attaquants : butin détenu PAR acteur (primaire + chaque rival nommé)
     try:
-        loot = float(game_state.get("loot", 0))
-        if loot >= WIN_TARGET and (winner is None or loot > winner[1]):
-            winner = (game_state.get("victim") and "attaquant" or "attaquant", loot, "attaquant")
+        with game_lock:
+            atk = [("attaquant", float(game_state.get("loot", 0)))] + [(h, float(v)) for h, v in rivals.items()]
+        for name, loot in atk:
+            if loot >= WIN_TARGET and (winner is None or loot > winner[1]):
+                winner = (name, loot, "attaquant")
     except Exception:  # noqa: BLE001
         pass
     if winner:
@@ -2423,10 +2432,14 @@ def _bucket(v: float) -> str:
     return f"~{lo}–{lo + 100} €"
 
 
-def _game_public() -> dict:
+def _game_public(actor: str = None) -> dict:
     with game_lock:
         g = dict(game_state)
-    cd = _cooldown_remaining()
+        primary = (not actor) or actor == "attaquant"
+        if not primary:
+            g["loot"] = round(float(rivals.get(actor, 0.0)), 2)   # butin PROPRE à cet attaquant
+    cd = _cooldown_remaining() if primary else _actor_cooldown(actor, False)
+    g["me"] = actor or "attaquant"
     g["blocked"] = cd > 0
     g["cooldown_remaining"] = cd
     g["loot_cap_remaining"] = round(max(0.0, GAME_LOOT_CAP - g["loot"] - g["loot_neutralized"]), 2)
@@ -2439,10 +2452,11 @@ def _game_public() -> dict:
 
 
 @app.get("/game/state")
-def game_state_public():
-    """État du jeu lu en direct par la console attaquant (toujours disponible)."""
+def game_state_public(request: Request, x_player: str = Header(default=None)):
+    """État du jeu lu en direct par la console attaquant (butin PROPRE à l'acteur)."""
+    actor, _is_primary = _resolve_actor(request, x_player)
     GAME_BLOCKED.set(1 if _cooldown_remaining() > 0 else 0)
-    return _game_public()
+    return _game_public(actor)
 
 
 @app.get("/game/suspicion")
@@ -2604,7 +2618,7 @@ def game_targets():
     return {"clients": clients, "bank": bank, "attackers": rv, "current": current}
 
 
-def _heist_client(target: str, body: HeistIn):
+def _heist_client(target: str, body: HeistIn, actor: str = "attaquant"):
     src = (body.source or "courant").lower()
     # Plafond relevé par la distraction de l'IA : plus elle est occupée, plus on vole gros.
     cap = HEIST_CLIENT_MAX * _toolkit_factor() * (1 + 2 * _distraction())
@@ -2653,37 +2667,34 @@ def _heist_client(target: str, body: HeistIn):
         s.commit()
     if caught:
         fine = round(CLIENT_FINE_RATE * stolen, 2)
+        loot = _attacker_loot_delta(actor, -fine)   # amende sur le butin PROPRE de l'acteur
         with game_lock:
-            game_state["loot"] = round(max(0.0, game_state["loot"] - fine), 2)
             game_state["loot_neutralized"] = round(game_state["loot_neutralized"] + stolen, 2)
             game_state["client_heists"] = int(game_state.get("client_heists", 0)) + 1
-            loot = game_state["loot"]
         GAME_THEFT.labels(target_type="client", result="caught").inc()
-        GAME_LOOT.set(loot)
-        print(f"[GAME] HEIST CLIENT CAUGHT target={target} stolen={stolen} fine={fine} loot={loot}", flush=True)
+        print(f"[GAME] HEIST CLIENT CAUGHT actor={actor} target={target} stolen={stolen} fine={fine} loot={loot}", flush=True)
         ws_manager.publish({"type": "tx", "from": target, "to": "✓ DÉFENSE", "amount": stolen, "op": "clawback"})
         return {"ok": False, "caught": True, "target": target, "target_type": "client",
                 "attempted": stolen, "fine": fine, "loot": loot,
                 "message": f"Cramé ! Vol déjoué, {target} remboursé, amende {fine:.0f} € sur ton butin.",
-                **_game_public()}
+                **_game_public(actor)}
+    loot = _attacker_loot_delta(actor, +stolen)      # butin crédité à l'acteur
     with game_lock:
-        game_state["loot"] = round(game_state["loot"] + stolen, 2)
         game_state["exfiltrated_total"] = round(game_state["exfiltrated_total"] + stolen, 2)
         game_state["heist_count"] += 1
         game_state["client_heists"] = int(game_state.get("client_heists", 0)) + 1
-        loot = game_state["loot"]
     GAME_HEIST.inc()
     GAME_HEIST_AMT.inc(stolen)
     GAME_THEFT.labels(target_type="client", result="success").inc()
     GAME_LOOT.set(loot)
-    print(f"[GAME] HEIST CLIENT target={target} src={src} stolen={stolen} loot={loot}", flush=True)
+    print(f"[GAME] HEIST CLIENT actor={actor} target={target} src={src} stolen={stolen} loot={loot}", flush=True)
     ws_manager.publish({"type": "tx", "from": target, "to": "⚠ INCONNU", "amount": stolen, "op": "heist"})
     _check_win()
     return {"ok": True, "caught": False, "target": target, "target_type": "client",
-            "stolen": stolen, "source": src, "loot": loot, **_game_public()}
+            "stolen": stolen, "source": src, "loot": loot, **_game_public(actor)}
 
 
-def _heist_bank(target: str, body: HeistIn):
+def _heist_bank(target: str, body: HeistIn, actor: str = "attaquant"):
     cap = HEIST_BANK_MAX * _toolkit_factor() * (1 + 2 * _distraction())
     want = float(body.amount) if (body.amount and body.amount > 0) else cap
     want = min(want, cap)
@@ -2705,68 +2716,69 @@ def _heist_bank(target: str, body: HeistIn):
                               recipient="✓ ALARME COFFRE (braquage déjoué)", status="completed"))
         s.commit()
     if caught:
+        lost = _attacker_loot(actor)
+        _attacker_loot_delta(actor, -lost)            # perte TOTALE du butin de CET acteur
+        now = time.time()
         with game_lock:
-            lost = game_state["loot"]
             game_state["loot_neutralized"] = round(game_state["loot_neutralized"] + lost, 2)
-            game_state["loot"] = 0.0
-            game_state["blocked_until"] = time.time() + BANK_BURN_COOLDOWN
-            game_state["block_reason"] = "braquage de la banque repéré — perte totale du butin"
+        if actor == "attaquant":
+            with game_lock:
+                game_state["blocked_until"] = now + BANK_BURN_COOLDOWN
+                game_state["block_reason"] = "braquage de la banque repéré — perte totale du butin"
+            GAME_BLOCKED.set(1)
+        else:   # bloque UNIQUEMENT cet attaquant (isolation)
+            e = _susp(actor)
+            with susp_lock:
+                e["blocked_until"] = now + BANK_BURN_COOLDOWN
+                e["last_reason"] = "braquage de la banque repéré — perte totale du butin"
         GAME_THEFT.labels(target_type="bank", result="caught").inc()
-        GAME_LOOT.set(0)
-        GAME_BLOCKED.set(1)
-        print(f"[GAME] HEIST BANK CAUGHT target={target} attempted={stolen} lost_all={lost}", flush=True)
+        print(f"[GAME] HEIST BANK CAUGHT actor={actor} attempted={stolen} lost_all={lost}", flush=True)
         ws_manager.publish({"type": "tx", "from": target, "to": "✓ DÉFENSE", "amount": stolen, "op": "bankfail"})
         return {"ok": False, "caught": True, "target": target, "target_type": "bank",
                 "attempted": stolen, "loot": 0.0, "lost_all": round(lost, 2),
                 "message": f"CRAMÉ sur la banque ! Butin perdu en TOTALITÉ ({lost:.0f} €) "
-                           f"+ cooldown {int(BANK_BURN_COOLDOWN)}s.", **_game_public()}
+                           f"+ cooldown {int(BANK_BURN_COOLDOWN)}s.", **_game_public(actor)}
+    loot = _attacker_loot_delta(actor, +stolen)
     with game_lock:
-        game_state["loot"] = round(game_state["loot"] + stolen, 2)
         game_state["exfiltrated_total"] = round(game_state["exfiltrated_total"] + stolen, 2)
         game_state["heist_count"] += 1
-        loot = game_state["loot"]
     GAME_HEIST.inc()
     GAME_HEIST_AMT.inc(stolen)
     GAME_THEFT.labels(target_type="bank", result="success").inc()
     GAME_LOOT.set(loot)
-    print(f"[GAME] HEIST BANK target={target} stolen={stolen} loot={loot}", flush=True)
+    print(f"[GAME] HEIST BANK actor={actor} target={target} stolen={stolen} loot={loot}", flush=True)
     ws_manager.publish({"type": "tx", "from": "BANQUE", "to": "⚠ INCONNU", "amount": stolen, "op": "heist"})
     _check_win()
     return {"ok": True, "caught": False, "target": target, "target_type": "bank",
-            "stolen": stolen, "loot": loot, **_game_public()}
+            "stolen": stolen, "loot": loot, **_game_public(actor)}
 
 
-def _heist_pvp(target: str):
-    with game_lock:
-        rival = float(rivals.get(target, 0.0))
+def _heist_pvp(target: str, actor: str = "attaquant"):
+    rival = _attacker_loot(target)
     if rival <= 0:
         raise HTTPException(402, f"« {target} » n'a pas de butin à voler")
     stolen = round(min(rival, HEIST_PVP_MAX * _toolkit_factor()), 2)
     caught = random.random() <= (CATCH_PVP_BASE * _stealth_factor())
     if caught:
-        with game_lock:
-            fine = round(0.5 * stolen, 2)
-            game_state["loot"] = round(max(0.0, game_state["loot"] - fine), 2)
-            loot = game_state["loot"]
+        fine = round(0.5 * stolen, 2)
+        loot = _attacker_loot_delta(actor, -fine)   # amende sur le butin de l'acteur
         GAME_THEFT.labels(target_type="attacker", result="caught").inc()
-        GAME_LOOT.set(loot)
         return {"ok": False, "caught": True, "target": target, "target_type": "attacker",
                 "attempted": stolen, "loot": loot,
-                "message": f"Contre-hack de « {target} » ! Tu perds {fine:.0f} €.", **_game_public()}
+                "message": f"Contre-hack de « {target} » ! Tu perds {fine:.0f} €.", **_game_public(actor)}
+    _attacker_loot_delta(target, -stolen)           # on vide le butin de la victime
+    loot = _attacker_loot_delta(actor, +stolen)     # et on crédite l'attaquant
     with game_lock:
-        rivals[target] = round(max(0.0, rivals.get(target, 0.0) - stolen), 2)
-        game_state["loot"] = round(game_state["loot"] + stolen, 2)
         game_state["exfiltrated_total"] = round(game_state["exfiltrated_total"] + stolen, 2)
         game_state["heist_count"] += 1
-        loot = game_state["loot"]
     GAME_HEIST.inc()
     GAME_HEIST_AMT.inc(stolen)
     GAME_THEFT.labels(target_type="attacker", result="success").inc()
     GAME_LOOT.set(loot)
-    print(f"[GAME] HEIST PVP from={target} stolen={stolen} loot={loot}", flush=True)
+    print(f"[GAME] HEIST PVP actor={actor} from={target} stolen={stolen} loot={loot}", flush=True)
     _check_win()
     return {"ok": True, "caught": False, "target": target, "target_type": "attacker",
-            "stolen": stolen, "loot": loot, **_game_public()}
+            "stolen": stolen, "loot": loot, **_game_public(actor)}
 
 
 @app.post("/game/heist")
@@ -2791,7 +2803,9 @@ def game_heist(body: HeistIn, request: Request, x_player: str = Header(default=N
         raise HTTPException(400, "aucune cible sélectionnée")
     # PvP : cible = un autre attaquant
     if (body.target_type or "").lower() == "attacker" or target in rivals:
-        res = _heist_pvp(target)
+        if target == actor:
+            raise HTTPException(400, "tu ne peux pas te voler toi-même")
+        res = _heist_pvp(target, actor)
         tt = "attacker"
     else:
         with Session(engine()) as s:
@@ -2806,9 +2820,9 @@ def game_heist(body: HeistIn, request: Request, x_player: str = Header(default=N
         if rc < need:
             raise HTTPException(400, f"reconnaissance insuffisante ({rc}/{need})")
         if role == "bank" or target == BANK_USER:
-            res, tt = _heist_bank(target, body), "bank"
+            res, tt = _heist_bank(target, body, actor), "bank"
         elif role == "client":
-            res, tt = _heist_client(target, body), "client"
+            res, tt = _heist_client(target, body, actor), "client"
         else:
             raise HTTPException(400, "cible non volable")
     # P4 : la suspicion monte (plus fort si cramé) puis tirage de blocage isolé.

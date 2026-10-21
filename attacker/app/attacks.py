@@ -22,6 +22,14 @@ _player_var = contextvars.ContextVar("atk_player", default=None)
 def set_current_player(name):
     _player_var.set((name or "").strip()[:32] or None)
 
+
+def _player_ip(name):
+    """IP synthétique STABLE et DISTINCTE par pseudo (chaque attaquant a sa propre IP
+    vue par la cible -> détection/blocage par IP isolés entre attaquants)."""
+    import hashlib
+    d = hashlib.md5((name or "attaquant").encode("utf-8")).digest()
+    return f"10.80.{d[0]}.{d[1]}"
+
 import requests
 
 SQLI_PAYLOADS = [
@@ -468,7 +476,8 @@ class GameController:
         """En-tete d'identite attaquant (X-Player) envoye a la cible. L'identite vient
         du navigateur (chaque attaquant choisit son pseudo) via le contextvar de requete ;
         a defaut (tache de fond), on retombe sur le pseudo par defaut du conteneur."""
-        return {"X-Player": _player_var.get() or self.name}
+        name = _player_var.get() or self.name
+        return {"X-Player": name, "X-Forwarded-For": _player_ip(name)}
 
     def _reveal_next(self):
         with self.lock:
