@@ -29,6 +29,8 @@ from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_
 # --- Configuration (tout par variables d'environnement, aucune valeur « jeu ») ---
 PROTECTED_UPSTREAM = os.environ.get("PROTECTED_UPSTREAM", "http://host.docker.internal:8000").rstrip("/")
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "orchestrator-admin-token")
+# Token interne : le canari de l'orchestrateur l'envoie pour ne pas être délesté par le bouclier.
+INTERNAL_TOKEN = os.environ.get("INTERNAL_TOKEN", "internal-trusted-token")
 # Identité du nœud (haute disponibilité) : « primary » ou « backup ». Exposée dans
 # /health et dans l'en-tête X-RG-Node de chaque réponse pour que le cockpit sache
 # quel nœud sert réellement le trafic (et détecte une bascule).
@@ -186,8 +188,9 @@ async def proxy(full_path: str, request: Request):
         _record(method, exc.status_code, time.time() - t0)
         return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
 
-    # (2) Load-shedding si le bouclier est actif.
-    if not _allow_request():
+    # (2) Load-shedding si le bouclier est actif (sauf requête interne : canari).
+    is_internal = request.headers.get("x-internal-token") == INTERNAL_TOKEN
+    if not is_internal and not _allow_request():
         _record(method, 429, time.time() - t0)
         return JSONResponse(
             {"detail": "service protégé (bouclier anti-DoS actif) — réessayez plus tard"},

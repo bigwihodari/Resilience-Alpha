@@ -118,6 +118,13 @@ docker start rg-gateway    # retour automatique au principal
 > L'orchestrateur pointe son canari/bouclier sur le point d'entrée HA (`ha-proxy`) : la
 > vérification prouve que le service répond même pendant une bascule.
 
+## Canari de reprise (`CANARY_MODE`)
+Après un incident, l'orchestrateur vérifie la reprise par un canari. `CANARY_MODE=health`
+(défaut) : `GET /health` de la passerelle. `CANARY_MODE=transaction` : login
+(`CANARY_LOGIN_PATH`, `CANARY_USER`/`CANARY_PASSWORD`) puis paiement fictif
+(`CANARY_TX_PATH`, `CANARY_AMOUNT`, `CANARY_RECIPIENT`) à travers la passerelle ; succès si HTTP 200.
+Le canari envoie `X-Internal-Token` (`INTERNAL_TOKEN`) pour être exempté du load-shedding.
+
 ## Démo du workshop
 1. Lancer une app démo (`demo-apps/paiement` ou `demo-apps/vitrine`).
 2. `docker compose -f module/docker-compose.module.yml up -d` avec `PROTECTED_UPSTREAM` vers l'app.

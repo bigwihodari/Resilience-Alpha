@@ -1,0 +1,43 @@
+---
+# Controle de bout en bout a travers la passerelle : sante, login, paiement.
+- name: Verifier la chaine passerelle -> app
+  hosts: hote
+  gather_facts: false
+  tasks:
+    - name: Sante de la passerelle
+      ansible.builtin.uri:
+        url: "{{ gateway_url }}/health"
+        return_content: true
+      register: gw_health
+      failed_when: gw_health.status != 200 or gw_health.json.status | default('') != 'ok'
+
+    - name: Login de l'utilisateur de demo
+      ansible.builtin.uri:
+        url: "{{ gateway_url }}/auth/login"
+        method: POST
+        body_format: json
+        body:
+          username: "{{ demo_user }}"
+          password: "{{ demo_password }}"
+        status_code: 200
+        return_content: true
+      register: login
+      no_log: true
+
+    - name: Paiement de test (1 EUR)
+      ansible.builtin.uri:
+        url: "{{ gateway_url }}/api/transactions"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ login.json.access_token }}"
+        body_format: json
+        body:
+          amount: 1
+          recipient: "{{ check_recipient }}"
+        status_code: 200
+      register: payment
+      no_log: true
+
+    - name: Resultat
+      ansible.builtin.debug:
+        msg: "OK : passerelle saine, login et paiement traverses (noeud {{ gw_health.json.node | default('?') }})"

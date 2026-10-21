@@ -31,6 +31,15 @@ GATEWAY = os.environ.get("GATEWAY_URL", "http://gateway:8080")
 PROM = os.environ.get("PROM_URL", "http://prometheus:9090")
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "orchestrator-admin-token")
 SHED_RATE = float(os.environ.get("SHED_RATE", "8.0"))
+INTERNAL_TOKEN = os.environ.get("INTERNAL_TOKEN", "internal-trusted-token")
+# Canari : "health" (GET /health de la passerelle) ou "transaction" (login + paiement fictif).
+CANARY_MODE = os.environ.get("CANARY_MODE", "health")
+CANARY_LOGIN_PATH = os.environ.get("CANARY_LOGIN_PATH", "/auth/login")
+CANARY_USER = os.environ.get("CANARY_USER", "")
+CANARY_PASSWORD = os.environ.get("CANARY_PASSWORD", "")
+CANARY_TX_PATH = os.environ.get("CANARY_TX_PATH", "/api/transactions")
+CANARY_AMOUNT = float(os.environ.get("CANARY_AMOUNT", "1"))
+CANARY_RECIPIENT = os.environ.get("CANARY_RECIPIENT", "CANARY")
 POLL = float(os.environ.get("POLL", "3"))
 CONFIRM = int(os.environ.get("CONFIRM", "2"))   # polls anormaux consécutifs avant d'agir
 CLEAR = int(os.environ.get("CLEAR", "4"))        # polls normaux consécutifs avant de lever le bouclier
@@ -80,13 +89,34 @@ def set_protection(enabled, rate=None):
         return False
 
 
+def _canary_health():
+    """GET /health de la passerelle (prouve seulement que la passerelle répond)."""
+    r = requests.get(f"{GATEWAY}/health", timeout=6)
+    return (r.status_code == 200, "ok" if r.status_code == 200 else f"health {r.status_code}")
+
+
+def _canary_transaction():
+    """Login puis paiement fictif via la passerelle (prouve que l'app métier fonctionne)."""
+    headers = {"X-Internal-Token": INTERNAL_TOKEN}  # exempte le canari du load-shedding
+    r = requests.post(f"{GATEWAY}{CANARY_LOGIN_PATH}", headers=headers, timeout=6,
+                      json={"username": CANARY_USER, "password": CANARY_PASSWORD})
+    if r.status_code != 200:
+        return (False, f"login {r.status_code}")
+    token = r.json().get("access_token")
+    if not token:
+        return (False, "login sans access_token")
+    r = requests.post(f"{GATEWAY}{CANARY_TX_PATH}", timeout=6,
+                      headers={**headers, "Authorization": f"Bearer {token}"},
+                      json={"amount": CANARY_AMOUNT, "recipient": CANARY_RECIPIENT})
+    return (r.status_code == 200, "ok" if r.status_code == 200 else f"tx {r.status_code}")
+
+
 def canary():
-    """Transaction canari : GET /health de la passerelle (prouve le bout en bout)."""
+    """Transaction canari (selon CANARY_MODE) : renvoie (ok, latence_ms, détail)."""
     t0 = time.time()
     try:
-        r = requests.get(f"{GATEWAY}/health", timeout=6)
-        lat = round((time.time() - t0) * 1000, 1)
-        return (r.status_code == 200, lat, "ok" if r.status_code == 200 else f"health {r.status_code}")
+        ok, detail = _canary_transaction() if CANARY_MODE == "transaction" else _canary_health()
+        return (ok, round((time.time() - t0) * 1000, 1), detail)
     except Exception as e:  # noqa: BLE001
         return (False, None, str(e))
 

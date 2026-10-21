@@ -20,6 +20,7 @@ services:
     environment:
       PROTECTED_UPSTREAM: ${PROTECTED_UPSTREAM:-http://host.docker.internal:8090}
       ADMIN_TOKEN: ${ADMIN_TOKEN:-orchestrator-admin-token}
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-internal-trusted-token}
       SHED_RATE: ${SHED_RATE:-8.0}
       UPSTREAM_TIMEOUT: ${UPSTREAM_TIMEOUT:-15}
     extra_hosts:
@@ -135,6 +136,14 @@ services:
       PROM_URL: http://prometheus:9090
       ADMIN_TOKEN: ${ADMIN_TOKEN:-orchestrator-admin-token}
       SHED_RATE: ${SHED_RATE:-8.0}
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-internal-trusted-token}
+      CANARY_MODE: ${CANARY_MODE:-health}
+      CANARY_LOGIN_PATH: ${CANARY_LOGIN_PATH:-/auth/login}
+      CANARY_USER: ${CANARY_USER:-}
+      CANARY_PASSWORD: ${CANARY_PASSWORD:-}
+      CANARY_TX_PATH: ${CANARY_TX_PATH:-/api/transactions}
+      CANARY_AMOUNT: ${CANARY_AMOUNT:-1}
+      CANARY_RECIPIENT: ${CANARY_RECIPIENT:-CANARY}
     depends_on:
       - detector
       - gateway

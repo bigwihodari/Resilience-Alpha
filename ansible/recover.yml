@@ -1,0 +1,70 @@
+---
+# Reprise "lourde" idempotente. La remediation temps reel reste l'affaire de l'orchestrateur.
+- name: Reprise apres mise a jour ou incident
+  hosts: hote
+  gather_facts: false
+  tasks:
+    - name: S'assurer que la base tourne
+      ansible.builtin.command:
+        cmd: docker compose up -d db
+        chdir: "{{ repo_root }}"
+      environment: "{{ app_env }}"
+      changed_when: false
+
+    - name: Attendre que la base accepte les connexions
+      ansible.builtin.shell: docker exec {{ db_container }} sh -c 'pg_isready -U "$POSTGRES_USER"'
+      register: pg
+      until: pg.rc == 0
+      retries: 12
+      delay: 5
+      changed_when: false
+
+    - name: Rejouer le schema (db/init.sql, CREATE ... IF NOT EXISTS)
+      ansible.builtin.shell: >
+        docker exec -i {{ db_container }}
+        sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+        < "{{ repo_root }}/db/init.sql"
+      changed_when: false   # idempotent : ne cree que ce qui manque
+
+    - name: Tester l'API
+      ansible.builtin.uri:
+        url: "http://localhost:8000/health"
+      register: api_health
+      failed_when: false
+
+    - name: Tester le frontend
+      ansible.builtin.uri:
+        url: "http://localhost:{{ app_frontend_port }}/"
+      register: front_health
+      failed_when: false
+
+    - name: Relancer api et frontend s'ils ne sont pas sains
+      ansible.builtin.command:
+        cmd: docker compose up -d --force-recreate api frontend
+        chdir: "{{ repo_root }}"
+      environment: "{{ app_env }}"
+      when: api_health.status != 200 or front_health.status != 200
+
+    - name: Tester la passerelle
+      ansible.builtin.uri:
+        url: "{{ gateway_url }}/health"
+      register: gw_health
+      failed_when: false
+
+    - name: Relancer la passerelle si elle n'est pas saine
+      ansible.builtin.command:
+        cmd: docker compose -f docker-compose.module.yml up -d --force-recreate gateway
+        chdir: "{{ module_dir }}"
+      environment: "{{ module_env }}"
+      when: gw_health.status != 200
+
+    - name: Attendre le retablissement de la chaine
+      ansible.builtin.uri:
+        url: "{{ gateway_url }}/health"
+      register: gw_after
+      until: gw_after.status == 200
+      retries: 30
+      delay: 5
+
+- name: Verification finale
+  ansible.builtin.import_playbook: verify.yml

@@ -26,6 +26,7 @@ services:
     environment:
       PROTECTED_UPSTREAM: ${PROTECTED_UPSTREAM:-http://host.docker.internal:8090}
       ADMIN_TOKEN: ${ADMIN_TOKEN:-orchestrator-admin-token}
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-internal-trusted-token}
       SHED_RATE: ${SHED_RATE:-8.0}
       UPSTREAM_TIMEOUT: ${UPSTREAM_TIMEOUT:-15}
       NODE_ID: backup
