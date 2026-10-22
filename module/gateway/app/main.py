@@ -199,7 +199,9 @@ async def proxy(full_path: str, request: Request):
 
     # (3) Proxy vers l'amont.
     url = f"{PROTECTED_UPSTREAM}/{full_path}"
-    fwd_headers = {k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP}
+    # Octets d'origine (Starlette décode en latin-1) : un en-tête non ASCII, ex. X-Player « Timéo »,
+    # ferait sinon échouer httpx (encodage ASCII) et renverrait un faux 502.
+    fwd_headers = {k: v.encode("latin-1") for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP}
     fwd_headers["X-Forwarded-Host"] = request.headers.get("host", "")
     fwd_headers["X-Forwarded-For"] = request.client.host if request.client else ""
     try:
